@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+option go_package = "github.com/johnewart/freighter/freighter";
+
+package freighter;
+
+service Freighter {
+  rpc GetDir (DirRequest) returns (DirReply) {}
+  rpc GetFile (FileRequest) returns (FileReply) {}
+}
+
+message DirRequest {
+  string repository = 1;
+  string target = 2;
+  string path = 3;
+}
+
+message DirReply {
+  repeated FileInfo files = 1;
+}
+
+message FileInfo {
+  string name = 1;
+  string path = 2;
+  bool isDir = 3;
+  int64 size = 4;
+  int64 modTime = 5;
+}
+
+message FileRequest {
+  string repository = 1;
+  string target = 2;
+  string path = 3;
+}
+
+message FileReply {
+  bytes data = 1;
+}
