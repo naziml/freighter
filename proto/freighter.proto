@@ -7,6 +7,16 @@ package freighter;
 service Freighter {
   rpc GetDir (DirRequest) returns (DirReply) {}
   rpc GetFile (FileRequest) returns (FileReply) {}
+  rpc GetTree (TreeRequest) returns (TreeReply) {}
+}
+
+message TreeRequest {
+  string repository = 1;
+  string target = 2;
+}
+
+message TreeReply {
+  repeated FileInfo files = 1;
 }
 
 message DirRequest {

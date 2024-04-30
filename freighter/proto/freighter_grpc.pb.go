@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion7
 const (
 	Freighter_GetDir_FullMethodName  = "/freighter.Freighter/GetDir"
 	Freighter_GetFile_FullMethodName = "/freighter.Freighter/GetFile"
+	Freighter_GetTree_FullMethodName = "/freighter.Freighter/GetTree"
 )
 
 // FreighterClient is the client API for Freighter service.
@@ -29,6 +30,7 @@ const (
 type FreighterClient interface {
 	GetDir(ctx context.Context, in *DirRequest, opts ...grpc.CallOption) (*DirReply, error)
 	GetFile(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (*FileReply, error)
+	GetTree(ctx context.Context, in *TreeRequest, opts ...grpc.CallOption) (*TreeReply, error)
 }
 
 type freighterClient struct {
@@ -57,12 +59,22 @@ func (c *freighterClient) GetFile(ctx context.Context, in *FileRequest, opts ...
 	return out, nil
 }
 
+func (c *freighterClient) GetTree(ctx context.Context, in *TreeRequest, opts ...grpc.CallOption) (*TreeReply, error) {
+	out := new(TreeReply)
+	err := c.cc.Invoke(ctx, Freighter_GetTree_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FreighterServer is the server API for Freighter service.
 // All implementations must embed UnimplementedFreighterServer
 // for forward compatibility
 type FreighterServer interface {
 	GetDir(context.Context, *DirRequest) (*DirReply, error)
 	GetFile(context.Context, *FileRequest) (*FileReply, error)
+	GetTree(context.Context, *TreeRequest) (*TreeReply, error)
 	mustEmbedUnimplementedFreighterServer()
 }
 
@@ -75,6 +87,9 @@ func (UnimplementedFreighterServer) GetDir(context.Context, *DirRequest) (*DirRe
 }
 func (UnimplementedFreighterServer) GetFile(context.Context, *FileRequest) (*FileReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFile not implemented")
+}
+func (UnimplementedFreighterServer) GetTree(context.Context, *TreeRequest) (*TreeReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetTree not implemented")
 }
 func (UnimplementedFreighterServer) mustEmbedUnimplementedFreighterServer() {}
 
@@ -125,6 +140,24 @@ func _Freighter_GetFile_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Freighter_GetTree_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TreeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FreighterServer).GetTree(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Freighter_GetTree_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FreighterServer).GetTree(ctx, req.(*TreeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Freighter_ServiceDesc is the grpc.ServiceDesc for Freighter service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -139,6 +172,10 @@ var Freighter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetFile",
 			Handler:    _Freighter_GetFile_Handler,
+		},
+		{
+			MethodName: "GetTree",
+			Handler:    _Freighter_GetTree_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

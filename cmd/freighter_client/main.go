@@ -65,6 +65,8 @@ func main() {
 	opts.Debug = *debug
 
 	log.Infof(ctx, "Mounting %s:%s!", *repo, *target)
+	//root := ffs.NewFreighterTree(ctx, c, *repo, *target, "")
+
 	root := &ffs.FreighterRoot{
 		Client:     c,
 		Repository: *repo,
@@ -74,6 +76,7 @@ func main() {
 	if err != nil {
 		log.Errorf(ctx, "Mount fail: %v", err)
 	}
+	root.LoadTree(ctx)
 	server.Wait()
 
 }

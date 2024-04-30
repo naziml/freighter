@@ -1,2 +1,10 @@
 cmd/freighter_client/fs
-
+**/*.db
+**/*.sqlite
+.idea
+cmd/freighter_client/freighter_client
+cmd/freighter_server/freighter_server
+**/*.log
+cmd/benchmark/benchmark
+.DS_Store
+**/*.log

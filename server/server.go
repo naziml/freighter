@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"github.com/johnewart/freighter/server/layers"
 	"net/http"
+	"strings"
 	"time"
 
 	"net"
@@ -19,7 +21,7 @@ import (
 type server struct {
 	pb.UnimplementedFreighterServer
 	ManifestStore   registry.ManifestStore
-	LayerRepository *LayerRepository
+	LayerRepository *layers.DiskLayerFileStore
 }
 
 func (s *server) GetFile(ctx context.Context, in *pb.FileRequest) (*pb.FileReply, error) {
@@ -32,16 +34,39 @@ func (s *server) GetFile(ctx context.Context, in *pb.FileRequest) (*pb.FileReply
 	}
 }
 
-func (s *server) GetDir(ctx context.Context, in *pb.DirRequest) (*pb.DirReply, error) {
-	log.Infof(ctx, "Received dir request for %s:%s /%v", in.GetRepository(), in.GetTarget(), in.GetPath())
+func (s *server) GetTree(ctx context.Context, in *pb.TreeRequest) (*pb.TreeReply, error) {
+	log.Infof(ctx, "Received tree request for %s:%s", in.GetRepository(), in.GetTarget())
 
 	files := make([]*pb.FileInfo, 0)
 
-	if fileRecords, err := s.LayerRepository.ListFiles(in.GetRepository(), in.GetTarget()); err != nil {
+	if directories := s.LayerRepository.GetDirectoryTree(in.GetRepository(), in.GetTarget()); directories == nil {
+		log.Errorf(ctx, "Error reading directory: %v", directories)
+	} else {
+		for _, d := range directories {
+			files = append(files, &pb.FileInfo{Name: d, Size: 0, IsDir: true})
+		}
+	}
+
+	return &pb.TreeReply{Files: files}, nil
+}
+
+func (s *server) GetDir(ctx context.Context, in *pb.DirRequest) (*pb.DirReply, error) {
+
+	path := in.GetPath()
+	if !strings.HasPrefix(path, "/") {
+		path = fmt.Sprintf("/%s", path)
+	}
+
+	log.Infof(ctx, "Received dir request for %s:%s %v", in.GetRepository(), in.GetTarget(), path)
+
+	files := make([]*pb.FileInfo, 0)
+
+	if fileRecords, err := s.LayerRepository.ListFiles(in.GetRepository(), in.GetTarget(), path); err != nil {
 		log.Errorf(ctx, "Error reading directory: %v", err)
 	} else {
-		log.Infof(ctx, "Found %d files", len(fileRecords))
+		log.Infof(ctx, "Found %d files in %s", len(fileRecords), path)
 		for _, f := range fileRecords {
+			log.Infof(ctx, "File: %s isdir: %s", f.Name, f.IsDir)
 			files = append(files, &pb.FileInfo{Name: f.Name, Size: f.Size, IsDir: f.IsDir})
 		}
 	}
@@ -65,11 +90,12 @@ func NewFreighterServer(rootPath string) *FreighterServer {
 		return nil
 	} else {
 		log.Infof(ctx, "Created manifest store: %v", manifestStore)
-		layerRepository := NewLayerRepository(rootPath, db)
+		layerRepository := layers.NewDiskLayerFileStore(rootPath, db)
+		indexingBlobstore := NewIndexingBlobStore(rootPath, layerRepository)
 
 		registryHandler := registry.New(
 			registry.WithWarning(.01, "Congratulations! You've won a lifetime's supply of free image pulls from this in-memory registry!"),
-			registry.WithBlobHandler(layerRepository),
+			registry.WithBlobHandler(indexingBlobstore),
 			registry.WithManifestStore(manifestStore),
 		)
 		pb.RegisterFreighterServer(s, &server{

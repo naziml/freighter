@@ -17,6 +17,7 @@ type LayerFile struct {
 	FilePath    string
 	Size        int64
 	IsDir       bool
+	Directory   string
 }
 
 type Layer struct {
@@ -133,6 +134,9 @@ func (d *DB) GetFileLayer(repo string, target string, filePath string) (*LayerFi
 
 	for _, l := range layers {
 		if err := d.db.Where("layer_digest = ? AND file_path = ?", l.Hash(), filePath).First(&layerFile).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				continue
+			}
 			return nil, err
 		}
 	}
@@ -140,24 +144,73 @@ func (d *DB) GetFileLayer(repo string, target string, filePath string) (*LayerFi
 	return &layerFile, nil
 }
 
-func (d *DB) GetFilesForRepo(repo string, target string) ([]LayerFile, error) {
+func (d *DB) GetDirectoryTreeForRepo(repo string, target string) []string {
+	var layers []Layer
+
+	if err := d.db.Where("repository = ? AND target = ?", repo, target).Find(&layers).Error; err != nil {
+		log.Errorf(context.Background(), "Error getting layers: %v", err)
+		return nil
+	}
+
+	var layerDigests []string
+	for _, l := range layers {
+		log.Infof(context.Background(), "Fetching directory tree for layer: %s:%s %s", repo, target, l.Digest)
+		layerDigests = append(layerDigests, l.Hash())
+	}
+
+	var layerfiles []LayerFile
+
+	if err := d.db.Where("layer_digest IN ?", layerDigests).Distinct("directory").Find(&layerfiles).Error; err != nil {
+		log.Errorf(context.Background(), "Error getting directory tree: %v", err)
+		return nil
+	}
+
+	log.Infof(context.Background(), "Found %d directories", len(layerfiles))
+
+	var directories []string
+	for _, f := range layerfiles {
+		directories = append(directories, f.Directory)
+	}
+	return directories
+}
+
+func (d *DB) GetFilesForRepo(repo string, target string, path string) ([]LayerFile, error) {
 	var layers []Layer
 
 	if err := d.db.Where("repository = ? AND target = ?", repo, target).Find(&layers).Error; err != nil {
 		return nil, err
 	}
 
+	log.Infof(context.Background(), "Fetching files for %s:%s with %d layers", repo, target, len(layers))
+
 	var layerFiles []LayerFile
 
+	filemap := make(map[string]LayerFile)
+
 	for _, l := range layers {
-		digest := strings.Split(l.Digest, ":")[1]
+		digest := l.Hash()
 		log.Infof(context.Background(), "Fetching files for layer: %s:%s %s", repo, target, digest)
-		if err := d.db.Where("layer_digest = ?", digest).Find(&layerFiles).Error; err != nil {
-			return nil, err
+		if path != "" {
+			log.Infof(context.Background(), "Fetching files for layer: %s:%s %s in %s", repo, target, digest, path)
+			if err := d.db.Where("layer_digest = ? AND directory = ?", digest, path).Find(&layerFiles).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			if err := d.db.Where("layer_digest = ?", digest).Find(&layerFiles).Error; err != nil {
+				return nil, err
+			}
+		}
+
+		for _, f := range layerFiles {
+			filemap[f.FilePath] = f
 		}
 	}
 
-	return layerFiles, nil
+	var files []LayerFile
+	for _, f := range filemap {
+		files = append(files, f)
+	}
+	return files, nil
 }
 
 func (d *DB) GetLayerFiles(digest string) ([]LayerFile, error) {
