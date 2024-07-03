@@ -1,10 +1,11 @@
-package server
+package data
 
 import (
 	"context"
+	"strings"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"strings"
 	"zombiezen.com/go/log"
 )
 

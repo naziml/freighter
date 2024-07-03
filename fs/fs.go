@@ -6,6 +6,8 @@ import (
 	"hash/fnv"
 	"strings"
 	"syscall"
+
+	"google.golang.org/grpc"
 	"zombiezen.com/go/log"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -201,10 +203,12 @@ func (r *FreighterRoot) Lookup(ctx context.Context, name string, out *fuse.Entry
 func (r *FreighterRoot) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	//_, file := strings.Split(r.Path, "/")[0], strings.Split(r.Path, "/")[1]
 	file := r.Path
-	log.Infof(ctx, "OPEN %s:%s %s", r.Repository, r.Target, file)
+	log.Infof(ctx, "FOPEN %s:%s %s", r.Repository, r.Target, file)
 	if r.IsDir {
+		log.Infof(ctx, "OPEN %s:%s %s is a directory", r.Repository, r.Target, file)
 		return nil, 0, syscall.EISDIR
 	} else {
+		log.Infof(ctx, "OPEN %s:%s %s is a file", r.Repository, r.Target, file)
 		if r.Data == nil {
 			resp, err := r.Client.GetFile(ctx, &pb.FileRequest{Repository: r.Repository, Target: r.Target, Path: file})
 			if err != nil {
@@ -231,8 +235,11 @@ func (f *FreighterNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse
 func (f *FreighterNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	log.Infof(ctx, "OPEN %s:%s %s", f.Repository, f.Target, f.Path)
 	if f.Data == nil {
-		resp, err := f.Client.GetFile(ctx, &pb.FileRequest{Repository: f.Repository, Target: f.Target, Path: f.Path})
+		log.Infof(ctx, "Fetching file %s from %s:%s", f.Path, f.Repository, f.Target)
+		maxSizeOption := grpc.MaxCallRecvMsgSize(1024 * 1024 * 1024)
+		resp, err := f.Client.GetFile(ctx, &pb.FileRequest{Repository: f.Repository, Target: f.Target, Path: f.Path}, maxSizeOption)
 		if err != nil {
+			log.Errorf(ctx, "Error fetching file data for %s:%s %s: %v", f.Repository, f.Target, f.Path, err)
 			return nil, 0, syscall.EIO
 		}
 		f.Data = resp.Data

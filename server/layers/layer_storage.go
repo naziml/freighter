@@ -5,19 +5,20 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
-	"github.com/johnewart/freighter/server"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/johnewart/freighter/server/data"
 	"zombiezen.com/go/log"
 )
 
 type DiskLayerFileStore struct {
 	LayerFileStore
 	RootPath string
-	DB       *server.DB
+	DB       *data.DB
 }
 
 type FileRecord struct {
@@ -26,7 +27,7 @@ type FileRecord struct {
 	IsDir bool
 }
 
-func NewDiskLayerFileStore(rootPath string, db *server.DB) *DiskLayerFileStore {
+func NewDiskLayerFileStore(rootPath string, db *data.DB) *DiskLayerFileStore {
 	return &DiskLayerFileStore{
 		RootPath: rootPath,
 		DB:       db,
@@ -107,7 +108,7 @@ func (s *DiskLayerFileStore) IngestFiles(digest string) error {
 
 			log.Infof(context.Background(), "Ingesting file: %s in '%s' (%s)", r.Name, dir, r.IsDir)
 
-			if err := s.DB.PutLayerFile(&server.LayerFile{
+			if err := s.DB.PutLayerFile(&data.LayerFile{
 				LayerDigest: digest,
 				FilePath:    r.Name,
 				Size:        r.Size,

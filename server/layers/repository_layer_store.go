@@ -2,16 +2,17 @@ package layers
 
 import (
 	"context"
-	"github.com/johnewart/freighter/server"
+
+	"github.com/johnewart/freighter/server/data"
 	"zombiezen.com/go/log"
 )
 
 type RepositoryLayerStore struct {
 	store *DiskLayerFileStore
-	DB    *server.DB
+	DB    *data.DB
 }
 
-func NewRepositoryLayerStore(layerStore *DiskLayerFileStore, db *server.DB) *RepositoryLayerStore {
+func NewRepositoryLayerStore(layerStore *DiskLayerFileStore, db *data.DB) *RepositoryLayerStore {
 	return &RepositoryLayerStore{
 		store: layerStore,
 		DB:    db,
