@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"os"
 	"sync"
 
 	"github.com/johnewart/freighter/server"
@@ -23,6 +25,11 @@ func main() {
 	if cacheRoot == nil || *cacheRoot == "" {
 		log.Errorf(context.Background(), "Please specify a cache root directory with -cacheroot")
 		return
+	}
+
+	if _, err := os.Stat(*cacheRoot); errors.Is(err, os.ErrNotExist) {
+		log.Infof(context.Background(), "Cache root %s does not exist, creating", *cacheRoot)
+		os.MkdirAll(*cacheRoot, 0755)
 	}
 
 	ctx := context.Background()

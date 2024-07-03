@@ -8,3 +8,5 @@ cmd/freighter_server/freighter_server
 cmd/benchmark/benchmark
 .DS_Store
 **/*.log
+**/tags.lock
+**/tags.files
