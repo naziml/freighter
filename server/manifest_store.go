@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/registry"
-	"github.com/johnewart/freighter/server/data"
+	"github.com/johnewart/freighter/server/layers/fs"
 )
 
 type ManifestConfig struct {
@@ -33,10 +33,10 @@ type FreighterManifestStore struct {
 	registry.ManifestStore
 	lock sync.RWMutex
 	ctx  context.Context
-	db   *data.DB
+	db   *fs.DB
 }
 
-func NewFreighterManifestStore(db *data.DB) (*FreighterManifestStore, error) {
+func NewFreighterManifestStore(db *fs.DB) (*FreighterManifestStore, error) {
 	ctx := context.Background()
 
 	return &FreighterManifestStore{
@@ -68,7 +68,7 @@ func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 		return fmt.Errorf("failed to deserialize manifest blob: %v", err)
 	}
 
-	ms := data.Manifest{
+	ms := fs.Manifest{
 		Repository:      manifest.Repository,
 		Target:          manifest.Target,
 		MediaType:       manifest.MediaType,
@@ -84,7 +84,7 @@ func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 	} else {
 
 		for i, l := range cm.Layers {
-			if err := m.db.PutLayer(&data.Layer{
+			if err := m.db.PutLayer(&fs.Layer{
 				ManifestID: mf.ID,
 				MediaType:  l.MediaType,
 				Digest:     l.Digest,

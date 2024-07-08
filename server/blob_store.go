@@ -3,22 +3,23 @@ package server
 import (
 	"context"
 	"errors"
-	"github.com/google/go-containerregistry/pkg/registry"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/johnewart/freighter/server/layers"
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/johnewart/freighter/server/layers"
 	"zombiezen.com/go/log"
 )
 
 type IndexingBlobStore struct {
 	registry.BlobHandler
 	root string
-	repo *layers.DiskLayerFileStore
+	repo layers.RepositoryStore
 }
 
-func NewIndexingBlobStore(rootPath string, repo *layers.DiskLayerFileStore) *IndexingBlobStore {
+func NewIndexingBlobStore(rootPath string, repo layers.RepositoryStore) *IndexingBlobStore {
 	return &IndexingBlobStore{
 		root: rootPath,
 		repo: repo,
@@ -44,34 +45,8 @@ func (s *IndexingBlobStore) Get(_ context.Context, _ string, h v1.Hash) (io.Read
 }
 
 func (s *IndexingBlobStore) Put(ctx context.Context, repo string, h v1.Hash, rc io.ReadCloser) error {
-	// Put the temp file in the same directory to avoid cross-device problems
-	// during the os.Rename.  The filenames cannot conflict.
-	f, err := os.CreateTemp(s.root, "upload-*")
-	if err != nil {
-		return err
-	}
 
-	if err := func() error {
-		defer f.Close()
-		_, err := io.Copy(f, rc)
-		return err
-	}(); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Join(s.root, h.Algorithm), os.ModePerm); err != nil {
-		return err
-	}
-	err = os.Rename(f.Name(), s.blobHashPath(h))
-	if err != nil {
-		log.Errorf(ctx, "Error renaming file: %v", err)
-		return err
-	}
-
-	log.Infof(ctx, "Ingesting layer: %s", h.Hex)
-	if err := s.repo.IngestFiles(h.Hex); err != nil {
-		log.Errorf(ctx, "Error ingesting files: %v", err)
-	}
-
+	s.repo.IngestLayerFromReader(ctx, repo, h.Algorithm, h.Hex, rc)
 	return nil
 }
 

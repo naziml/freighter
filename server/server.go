@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/johnewart/freighter/server/data"
 	"github.com/johnewart/freighter/server/layers"
+	"github.com/johnewart/freighter/server/layers/fs"
 
 	"net"
 	"os"
@@ -23,7 +23,7 @@ import (
 type server struct {
 	pb.UnimplementedFreighterServer
 	ManifestStore   registry.ManifestStore
-	LayerRepository *layers.RepositoryLayerStore
+	LayerRepository layers.RepositoryStore
 }
 
 func (s *server) GetFile(ctx context.Context, in *pb.FileRequest) (*pb.FileReply, error) {
@@ -85,16 +85,16 @@ type FreighterServer struct {
 func NewFreighterServer(rootPath string) *FreighterServer {
 	ctx := context.Background()
 	s := grpc.NewServer()
-	db := data.NewDB("manifests.db")
+	db := fs.NewDB("manifests.db")
 
 	if manifestStore, err := NewFreighterManifestStore(db); err != nil {
 		log.Errorf(ctx, "Error creating manifest store: %v", err)
 		return nil
 	} else {
 		log.Infof(ctx, "Created manifest store: %v", manifestStore)
-		layerStore := layers.NewDiskLayerFileStore(rootPath, db)
-		layerRepository := layers.NewRepositoryLayerStore(layerStore, db)
-		indexingBlobstore := NewIndexingBlobStore(rootPath, layerStore)
+		layerStore := fs.NewDiskLayerStore(rootPath, db)
+		layerRepository := fs.NewDiskRepositoryStore(layerStore, db)
+		indexingBlobstore := NewIndexingBlobStore(rootPath, layerRepository)
 
 		registryHandler := registry.New(
 			registry.WithWarning(.01, "Congratulations! You've won a lifetime's supply of free image pulls from this in-memory registry!"),

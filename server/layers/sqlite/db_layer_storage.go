@@ -1,4 +1,4 @@
-package layers
+package sqlite
 
 import (
 	"archive/tar"
@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/johnewart/freighter/server/data"
+	"github.com/johnewart/freighter/server/layers"
 	"zombiezen.com/go/log"
 )
 
 type DiskLayerFileStore struct {
-	LayerFileStore
+	layers.LayerFileStore
 	RootPath string
-	DB       *data.DB
+	DB       *DB
 }
 
 type FileRecord struct {
@@ -27,7 +27,7 @@ type FileRecord struct {
 	IsDir bool
 }
 
-func NewDiskLayerFileStore(rootPath string, db *data.DB) *DiskLayerFileStore {
+func NewDiskLayerFileStore(rootPath string, db *DB) *DiskLayerFileStore {
 	return &DiskLayerFileStore{
 		RootPath: rootPath,
 		DB:       db,
@@ -38,21 +38,22 @@ func (s *DiskLayerFileStore) getLayerPath(digest string) string {
 	return filepath.Join(s.RootPath, "sha256", digest)
 }
 
-func (s *DiskLayerFileStore) readFilesFromArchive(digest string) ([]FileRecord, error) {
+func (s *DiskLayerFileStore) IngestFiles(digest string) error {
 	digestPath := s.getLayerPath(digest)
 	log.Infof(context.Background(), "Reading files from layer: %s @ %s", digest, digestPath)
-	files := make([]FileRecord, 0)
-	if file, err := os.Open(digestPath); err == nil {
+	if file, err := os.Open(digestPath); err != nil {
+		return err
+	} else {
 		archive, err := gzip.NewReader(file)
 
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		tr := tar.NewReader(archive)
 
 		if tr == nil {
-			return nil, err
+			return err
 		}
 
 		for {
@@ -61,33 +62,10 @@ func (s *DiskLayerFileStore) readFilesFromArchive(digest string) ([]FileRecord, 
 				break
 			}
 			if err != nil {
-				return nil, err
+				return err
 			}
-			files = append(files, FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false})
-		}
-	}
+			r := FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false}
 
-	return files, nil
-}
-
-func (s *DiskLayerFileStore) LayerFileNames(digest string) ([]string, error) {
-	files, err := s.readFilesFromArchive(digest)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(files))
-	for _, f := range files {
-		names = append(names, f.Name)
-	}
-	return names, nil
-}
-
-func (s *DiskLayerFileStore) IngestFiles(digest string) error {
-	if files, err := s.readFilesFromArchive(digest); err != nil {
-		log.Errorf(context.Background(), "Error reading files from layer: %v", err)
-		return err
-	} else {
-		for _, r := range files {
 			if !strings.HasPrefix(r.Name, "/") {
 				r.Name = fmt.Sprintf("/%s", r.Name)
 			}
@@ -108,15 +86,29 @@ func (s *DiskLayerFileStore) IngestFiles(digest string) error {
 
 			log.Infof(context.Background(), "Ingesting file: %s in '%s' (%s)", r.Name, dir, r.IsDir)
 
-			if err := s.DB.PutLayerFile(&data.LayerFile{
-				LayerDigest: digest,
-				FilePath:    r.Name,
-				Size:        r.Size,
-				IsDir:       r.IsDir,
-				Directory:   dir,
-			}); err != nil {
-				log.Errorf(context.Background(), "Error creating layer file: %v", err)
-				return err
+			if !r.IsDir {
+
+				buf := make([]byte, hdr.Size)
+				_, err = tr.Read(buf)
+				if err != nil {
+					log.Errorf(context.Background(), "Error reading file: %v", err)
+					continue
+				}
+
+				if err := s.DB.PutLayerFile(&LayerFile{
+					LayerDigest: digest,
+					LayerIndex:  -1,
+					Repository:  "",
+					Target:      "",
+					FilePath:    r.Name,
+					Size:        r.Size,
+					IsDir:       r.IsDir,
+					Directory:   dir,
+					Data:        buf,
+				}); err != nil {
+					log.Errorf(context.Background(), "Error creating layer file: %v", err)
+					return err
+				}
 			}
 		}
 		return nil
@@ -163,7 +155,14 @@ func (s *DiskLayerFileStore) ReadFile(layerDigest string, filename string) ([]by
 }
 
 func (s *DiskLayerFileStore) GetDirectoryTree(layerDigest string) ([]FileRecord, error) {
-	return s.readFilesFromArchive(layerDigest)
+
+	dirNames := s.DB.GetDirectoryTreeForLayer(layerDigest)
+	fileRecords := make([]FileRecord, 0)
+	for _, d := range dirNames {
+		fileRecords = append(fileRecords, FileRecord{Name: d, Size: 0, IsDir: true})
+		log.Infof(context.Background(), "Directory: %s", d)
+	}
+	return fileRecords, nil
 }
 
 func (s *DiskLayerFileStore) DeleteLayer(hex string) error {

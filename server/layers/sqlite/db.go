@@ -1,7 +1,8 @@
-package data
+package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 
 	"gorm.io/driver/sqlite"
@@ -14,11 +15,15 @@ type DB struct {
 }
 
 type LayerFile struct {
-	LayerDigest string
-	FilePath    string
+	LayerDigest string `gorm:"index:idx_layerdigest"`
+	LayerIndex  int
+	FilePath    string `gorm:"index:idx_repofile"`
 	Size        int64
 	IsDir       bool
 	Directory   string
+	Repository  string `gorm:"index:idx_repofile"`
+	Target      string
+	Data        []byte
 }
 
 type Layer struct {
@@ -133,16 +138,53 @@ func (d *DB) GetFileLayer(repo string, target string, filePath string) (*LayerFi
 
 	var layerFile LayerFile
 
-	for _, l := range layers {
-		if err := d.db.Where("layer_digest = ? AND file_path = ?", l.Hash(), filePath).First(&layerFile).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				continue
-			}
-			return nil, err
+	//for _, l := range layers {
+	//if err := d.db.Where("layer_digest = ? AND file_path = ?", l.Hash(), filePath).First(&layerFile).Error; err != nil {
+	if err := d.db.Where("repository = ? AND file_path = ?", repo, filePath).Order("layer_index desc").First(&layerFile).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			log.Infof(context.Background(), "File not found in any layer: %s:%s %s", repo, target, filePath)
 		}
+		return nil, err
 	}
 
 	return &layerFile, nil
+}
+
+func (d *DB) GetDirectoryTreeForLayer(digest string) []string {
+	var layer Layer
+
+	dirMap := make(map[string]int)
+
+	dirMap["/"] = 0
+
+	if err := d.db.Where("digest = ?", digest).First(&layer).Error; err != nil {
+		log.Errorf(context.Background(), "Error getting layer: %v", err)
+	} else {
+		log.Infof(context.Background(), "Found layer: %s", digest)
+		layers := make([]Layer, 0)
+		if err := d.db.Where("repository = ? AND target = ? AND level <= ?", layer.Repository, layer.Target, layer.Level).Find(&layers).Error; err != nil {
+			log.Errorf(context.Background(), "Error getting layers: %v", err)
+		} else {
+			for _, l := range layers {
+				fileNames := make([]string, 0)
+				if err := d.db.Model(&LayerFile{}).Where("layer_digest = ?", l.Hash()).Pluck("file_path", &fileNames).Error; err != nil {
+					log.Errorf(context.Background(), "Error getting files: %v", err)
+				} else {
+					for _, f := range fileNames {
+						dir, _ := filepath.Split(f)
+						dirMap[dir] = l.Level
+					}
+				}
+			}
+		}
+	}
+
+	var directories []string
+	for k := range dirMap {
+		directories = append(directories, k)
+	}
+
+	return directories
 }
 
 func (d *DB) GetDirectoryTreeForRepo(repo string, target string) []string {
@@ -168,7 +210,8 @@ func (d *DB) GetDirectoryTreeForRepo(repo string, target string) []string {
 
 	log.Infof(context.Background(), "Found %d directories", len(layerfiles))
 
-	var directories []string
+	var directories = []string{"/"}
+
 	for _, f := range layerfiles {
 		directories = append(directories, f.Directory)
 	}
@@ -214,6 +257,15 @@ func (d *DB) GetFilesForRepo(repo string, target string, path string) ([]LayerFi
 	return files, nil
 }
 
+func (d *DB) UpdateLayerFiles(layerDigest string, layerIndex int, repository string, target string) error {
+	if err := d.db.Model(&LayerFile{}).Where("layer_digest = ?", layerDigest).Update("layer_index", layerIndex).Update("repository", repository).Update("target", target).Error; err != nil {
+		log.Errorf(context.Background(), "Error updating layer files: %v", err)
+		return err
+	}
+
+	return nil
+}
+
 func (d *DB) GetLayerFiles(digest string) ([]LayerFile, error) {
 	var layerFiles []LayerFile
 
@@ -238,6 +290,15 @@ func (d *DB) PutLayer(l *Layer) error {
 	}
 
 	return nil
+}
+
+func (d *DB) GetLayer(hash string) (*Layer, error) {
+	var layer Layer
+	if err := d.db.Where("digest = ?", hash).First(&layer).Error; err != nil {
+		return nil, err
+	}
+
+	return &layer, nil
 }
 
 func (d *DB) DeleteLayer(digest string) error {
