@@ -8,7 +8,9 @@ import (
 	"sync"
 
 	"github.com/johnewart/freighter/server"
+	"github.com/johnewart/freighter/server/storage"
 	"github.com/johnewart/freighter/server/storage/fs"
+	"github.com/johnewart/freighter/server/storage/sqlite"
 	"zombiezen.com/go/log"
 )
 
@@ -35,12 +37,22 @@ func main() {
 
 	ctx := context.Background()
 
-	dataStore, err := fs.NewDiskDataStore(*cacheRoot)
+	layerStore, err := fs.NewDiskLayerFileStore(*cacheRoot)
 	if err != nil {
 		log.Errorf(ctx, "Error creating data store: %v", err)
 		return
 	}
 
+	metadataStore, err := sqlite.NewDBMetadataStore(*cacheRoot)
+
+	dataStore, err := storage.NewFreighterDataStore(metadataStore, layerStore)
+
+	if err != nil {
+		log.Errorf(ctx, "Error creating data store: %v", err)
+		return
+	}
+
+	log.Infof(ctx, "Data store initialized")
 	fs := server.NewFreighterServer(dataStore)
 	wg.Add(2)
 	go func() {

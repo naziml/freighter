@@ -2,77 +2,78 @@ package sqlite
 
 import (
 	"context"
-	"path/filepath"
-	"strings"
+	"os"
+	"time"
 
+	golog "log"
+
+	"github.com/johnewart/freighter/server/storage/types"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"zombiezen.com/go/log"
 )
 
-type DB struct {
+type DBMetadataStore struct {
+	types.MetadataStore
 	db *gorm.DB
 }
 
-type LayerFile struct {
-	LayerDigest string `gorm:"index:idx_layerdigest"`
-	LayerIndex  int
-	FilePath    string `gorm:"index:idx_repofile"`
-	Size        int64
-	IsDir       bool
-	Directory   string
-	Repository  string `gorm:"index:idx_repofile"`
-	Target      string
-	Data        []byte
-}
+func NewDBMetadataStore(path string) (*DBMetadataStore, error) {
+	newLogger := logger.New(
+		golog.New(os.Stdout, "\r\n", golog.LstdFlags), // io writer
+		logger.Config{
+			SlowThreshold:             time.Second, // Slow SQL threshold
+			LogLevel:                  logger.Info,
+			IgnoreRecordNotFoundError: true,  // Ignore ErrRecordNotFound error for logger
+			ParameterizedQueries:      true,  // Don't include params in the SQL log
+			Colorful:                  false, // Disable color
+		},
+	)
 
-type Layer struct {
-	ManifestID uint
-	MediaType  string
-	Size       int
-	Digest     string
-	Level      int
-	Repository string
-	Target     string
-}
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
+		Logger: newLogger,
+	})
 
-func (l *Layer) Hash() string {
-	if strings.HasPrefix(l.Digest, "sha256:") {
-		return strings.Split(l.Digest, ":")[1]
+	if err != nil {
+		return nil, err
 	}
-	return l.Digest
-}
 
-type Manifest struct {
-	ID              uint   `gorm:"primaryKey"`
-	Repository      string `gorm:"index:idx_repotarget,unique"`
-	Target          string `gorm:"index:idx_repotarget,unique"`
-	SchemaVersion   int
-	MediaType       string
-	ConfigMediaType string
-	ConfigDigest    string
-	ConfigSize      int
-	RawBlob         []byte
-}
-
-func NewDB(path string) *DB {
-	db, _ := gorm.Open(sqlite.Open(path), &gorm.Config{})
-	d := &DB{
+	d := &DBMetadataStore{
 		db: db,
 	}
 
 	d.Migrate()
-	return d
+	return d, nil
 }
 
-func (d *DB) Migrate() {
-	d.db.AutoMigrate(&Manifest{})
-	d.db.AutoMigrate(&Layer{})
-	d.db.AutoMigrate(&LayerFile{})
+func (d *DBMetadataStore) Migrate() {
+	d.db.AutoMigrate(&types.Manifest{})
+	d.db.AutoMigrate(&types.Layer{})
+	d.db.AutoMigrate(&types.LayerFile{})
 }
 
-func (d *DB) GetManifest(repo string, target string) (*Manifest, error) {
-	var manifest Manifest
+func (d *DBMetadataStore) Close() {
+	sqlDB, _ := d.db.DB()
+	sqlDB.Close()
+}
+
+func (d *DBMetadataStore) GetLayer(digest types.Digest) (*types.Layer, error) {
+	var layer types.Layer
+
+	if err := d.db.Where("digest = ?", digest.String()).First(&layer).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		} else {
+			return nil, err
+		}
+	}
+
+	return &layer, nil
+}
+
+func (d *DBMetadataStore) GetManifest(repo string, target string) (*types.Manifest, error) {
+	var manifest types.Manifest
 
 	if err := d.db.Where("repository = ? AND target = ?", repo, target).First(&manifest).Error; err != nil {
 		return nil, err
@@ -81,7 +82,7 @@ func (d *DB) GetManifest(repo string, target string) (*Manifest, error) {
 	return &manifest, nil
 }
 
-func (d *DB) PutManifest(m Manifest) (Manifest, error) {
+func (d *DBMetadataStore) PutManifest(m types.Manifest) (types.Manifest, error) {
 
 	if err := d.db.Create(&m).Error; err != nil {
 		return m, err
@@ -90,8 +91,8 @@ func (d *DB) PutManifest(m Manifest) (Manifest, error) {
 	return m, nil
 }
 
-func (d *DB) ManifestsForRepo(repo string) ([]Manifest, error) {
-	var manifests []Manifest
+func (d *DBMetadataStore) ManifestsForRepo(repo string) ([]types.Manifest, error) {
+	var manifests []types.Manifest
 
 	if err := d.db.Where("repository = ?", repo).Find(&manifests).Error; err != nil {
 		return nil, err
@@ -100,8 +101,8 @@ func (d *DB) ManifestsForRepo(repo string) ([]Manifest, error) {
 	return manifests, nil
 }
 
-func (d *DB) ManifestExists(repo string, target string) bool {
-	var manifest Manifest
+func (d *DBMetadataStore) ManifestExists(repo string, target string) bool {
+	var manifest types.Manifest
 
 	if err := d.db.Where("repository = ? AND target = ?", repo, target).First(&manifest).Error; err != nil {
 		return false
@@ -110,85 +111,48 @@ func (d *DB) ManifestExists(repo string, target string) bool {
 	return true
 }
 
-func (d *DB) ListRepositories() []string {
+func (d *DBMetadataStore) ListRepositories() []string {
 	var repos []string
 
-	if err := d.db.Model(&Manifest{}).Select("repository").Group("repository").Find(&repos).Error; err != nil {
+	if err := d.db.Model(&types.Manifest{}).Select("repository").Group("repository").Find(&repos).Error; err != nil {
 		return nil
 	}
 
 	return repos
 }
 
-func (d *DB) DeleteManifest(repo string, target string) error {
-	if err := d.db.Where("repository = ? AND target = ?", repo, target).Delete(&Manifest{}).Error; err != nil {
+func (d *DBMetadataStore) DeleteManifest(repo string, target string) error {
+	if err := d.db.Where("repository = ? AND target = ?", repo, target).Delete(&types.Manifest{}).Error; err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *DB) GetFileLayer(repo string, target string, filePath string) (*LayerFile, error) {
+func (d *DBMetadataStore) GetFileLayer(repo string, target string, filePath string) (*types.LayerFile, error) {
 
-	var layers []Layer
+	var layers []types.Layer
 
 	if err := d.db.Where("repository = ? AND target = ?", repo, target).Order("level desc").Find(&layers).Error; err != nil {
 		return nil, err
 	}
 
-	var layerFile LayerFile
+	var layerFile types.LayerFile
 
-	//for _, l := range layers {
-	//if err := d.db.Where("layer_digest = ? AND file_path = ?", l.Hash(), filePath).First(&layerFile).Error; err != nil {
-	if err := d.db.Where("repository = ? AND file_path = ?", repo, filePath).Order("layer_index desc").First(&layerFile).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			log.Infof(context.Background(), "File not found in any layer: %s:%s %s", repo, target, filePath)
+	for _, l := range layers {
+		if err := d.db.Where("layer_digest = ? AND file_path = ?", l.GetDigest(), filePath).First(&layerFile).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				continue
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	return &layerFile, nil
 }
 
-func (d *DB) GetDirectoryTreeForLayer(digest string) []string {
-	var layer Layer
-
-	dirMap := make(map[string]int)
-
-	dirMap["/"] = 0
-
-	if err := d.db.Where("digest = ?", digest).First(&layer).Error; err != nil {
-		log.Errorf(context.Background(), "Error getting layer: %v", err)
-	} else {
-		log.Infof(context.Background(), "Found layer: %s", digest)
-		layers := make([]Layer, 0)
-		if err := d.db.Where("repository = ? AND target = ? AND level <= ?", layer.Repository, layer.Target, layer.Level).Find(&layers).Error; err != nil {
-			log.Errorf(context.Background(), "Error getting layers: %v", err)
-		} else {
-			for _, l := range layers {
-				fileNames := make([]string, 0)
-				if err := d.db.Model(&LayerFile{}).Where("layer_digest = ?", l.Hash()).Pluck("file_path", &fileNames).Error; err != nil {
-					log.Errorf(context.Background(), "Error getting files: %v", err)
-				} else {
-					for _, f := range fileNames {
-						dir, _ := filepath.Split(f)
-						dirMap[dir] = l.Level
-					}
-				}
-			}
-		}
-	}
-
-	var directories []string
-	for k := range dirMap {
-		directories = append(directories, k)
-	}
-
-	return directories
-}
-
-func (d *DB) GetDirectoryTreeForRepo(repo string, target string) []string {
-	var layers []Layer
+func (d *DBMetadataStore) GetDirectoryTreeForRepo(repo string, target string) []string {
+	var layers []types.Layer
 
 	if err := d.db.Where("repository = ? AND target = ?", repo, target).Find(&layers).Error; err != nil {
 		log.Errorf(context.Background(), "Error getting layers: %v", err)
@@ -198,10 +162,10 @@ func (d *DB) GetDirectoryTreeForRepo(repo string, target string) []string {
 	var layerDigests []string
 	for _, l := range layers {
 		log.Infof(context.Background(), "Fetching directory tree for layer: %s:%s %s", repo, target, l.Digest)
-		layerDigests = append(layerDigests, l.Hash())
+		layerDigests = append(layerDigests, l.Digest)
 	}
 
-	var layerfiles []LayerFile
+	var layerfiles []types.LayerFile
 
 	if err := d.db.Where("layer_digest IN ?", layerDigests).Distinct("directory").Find(&layerfiles).Error; err != nil {
 		log.Errorf(context.Background(), "Error getting directory tree: %v", err)
@@ -210,16 +174,15 @@ func (d *DB) GetDirectoryTreeForRepo(repo string, target string) []string {
 
 	log.Infof(context.Background(), "Found %d directories", len(layerfiles))
 
-	var directories = []string{"/"}
-
+	var directories []string
 	for _, f := range layerfiles {
 		directories = append(directories, f.Directory)
 	}
 	return directories
 }
 
-func (d *DB) GetFilesForRepo(repo string, target string, path string) ([]LayerFile, error) {
-	var layers []Layer
+func (d *DBMetadataStore) GetFilesForRepo(repo string, target string, path string) ([]types.LayerFile, error) {
+	var layers []types.Layer
 
 	if err := d.db.Where("repository = ? AND target = ?", repo, target).Find(&layers).Error; err != nil {
 		return nil, err
@@ -227,20 +190,19 @@ func (d *DB) GetFilesForRepo(repo string, target string, path string) ([]LayerFi
 
 	log.Infof(context.Background(), "Fetching files for %s:%s with %d layers", repo, target, len(layers))
 
-	var layerFiles []LayerFile
+	var layerFiles []types.LayerFile
 
-	filemap := make(map[string]LayerFile)
+	filemap := make(map[string]types.LayerFile)
 
 	for _, l := range layers {
-		digest := l.Hash()
-		log.Infof(context.Background(), "Fetching files for layer: %s:%s %s", repo, target, digest)
+		log.Infof(context.Background(), "Fetching files for layer: %s:%s %s", repo, target, l.Digest)
 		if path != "" {
-			log.Infof(context.Background(), "Fetching files for layer: %s:%s %s in %s", repo, target, digest, path)
-			if err := d.db.Where("layer_digest = ? AND directory = ?", digest, path).Find(&layerFiles).Error; err != nil {
+			log.Infof(context.Background(), "Fetching files for layer: %s:%s %s in %s", repo, target, l.Digest, path)
+			if err := d.db.Where("layer_digest = ? AND directory = ?", l.Digest, path).Find(&layerFiles).Error; err != nil {
 				return nil, err
 			}
 		} else {
-			if err := d.db.Where("layer_digest = ?", digest).Find(&layerFiles).Error; err != nil {
+			if err := d.db.Where("layer_digest = ?", l.Digest).Find(&layerFiles).Error; err != nil {
 				return nil, err
 			}
 		}
@@ -250,33 +212,24 @@ func (d *DB) GetFilesForRepo(repo string, target string, path string) ([]LayerFi
 		}
 	}
 
-	var files []LayerFile
+	var files []types.LayerFile
 	for _, f := range filemap {
 		files = append(files, f)
 	}
 	return files, nil
 }
 
-func (d *DB) UpdateLayerFiles(layerDigest string, layerIndex int, repository string, target string) error {
-	if err := d.db.Model(&LayerFile{}).Where("layer_digest = ?", layerDigest).Update("layer_index", layerIndex).Update("repository", repository).Update("target", target).Error; err != nil {
-		log.Errorf(context.Background(), "Error updating layer files: %v", err)
-		return err
-	}
+func (d *DBMetadataStore) GetLayerFiles(digest types.Digest) ([]types.LayerFile, error) {
+	var layerFiles []types.LayerFile
 
-	return nil
-}
-
-func (d *DB) GetLayerFiles(digest string) ([]LayerFile, error) {
-	var layerFiles []LayerFile
-
-	if err := d.db.Where("layer_digest = ?", digest).Find(&layerFiles).Error; err != nil {
+	if err := d.db.Where("layer_digest = ?", digest.String()).Find(&layerFiles).Error; err != nil {
 		return nil, err
 	}
 
 	return layerFiles, nil
 }
 
-func (d *DB) PutLayerFile(lf *LayerFile) error {
+func (d *DBMetadataStore) PutLayerFile(lf *types.LayerFile) error {
 	if err := d.db.Create(lf).Error; err != nil {
 		return err
 	}
@@ -284,7 +237,7 @@ func (d *DB) PutLayerFile(lf *LayerFile) error {
 	return nil
 }
 
-func (d *DB) PutLayer(l *Layer) error {
+func (d *DBMetadataStore) PutLayer(l *types.Layer) error {
 	if err := d.db.Create(l).Error; err != nil {
 		return err
 	}
@@ -292,21 +245,12 @@ func (d *DB) PutLayer(l *Layer) error {
 	return nil
 }
 
-func (d *DB) GetLayer(hash string) (*Layer, error) {
-	var layer Layer
-	if err := d.db.Where("digest = ?", hash).First(&layer).Error; err != nil {
-		return nil, err
-	}
-
-	return &layer, nil
-}
-
-func (d *DB) DeleteLayer(digest string) error {
-	if err := d.db.Where("digest = ?", digest).Delete(&Layer{}).Error; err != nil {
+func (d *DBMetadataStore) DeleteLayer(digest types.Digest) error {
+	if err := d.db.Where("digest = ?", digest).Delete(&types.Layer{}).Error; err != nil {
 		return err
 	}
 
-	if err := d.db.Where("layer_digest = ?", digest).Delete(&LayerFile{}).Error; err != nil {
+	if err := d.db.Where("layer_digest = ?", digest).Delete(&types.LayerFile{}).Error; err != nil {
 		return err
 	}
 

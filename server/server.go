@@ -68,7 +68,7 @@ func (s *server) GetDir(ctx context.Context, in *pb.DirRequest) (*pb.DirReply, e
 	} else {
 		log.Infof(ctx, "Found %d files in %s", len(fileRecords), path)
 		for _, f := range fileRecords {
-			log.Infof(ctx, "File: %s isdir: %s", f.Name, f.IsDir)
+			log.Infof(ctx, "File: %s isdir: %v", f.Name, f.IsDir)
 			files = append(files, &pb.FileInfo{Name: f.Name, Size: f.Size, IsDir: f.IsDir})
 		}
 	}

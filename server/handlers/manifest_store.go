@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/johnewart/freighter/server/storage"
+	"github.com/johnewart/freighter/server/storage/types"
 	"zombiezen.com/go/log"
 )
 
@@ -71,7 +72,7 @@ func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 		return fmt.Errorf("failed to deserialize manifest blob: %v", err)
 	}
 
-	ms := storage.Manifest{
+	ms := types.Manifest{
 		Repository:      manifest.Repository,
 		Target:          manifest.Target,
 		MediaType:       manifest.MediaType,
@@ -88,7 +89,7 @@ func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 
 		for i, l := range cm.Layers {
 			log.Infof(m.ctx, "Put layer %s:%s %s", manifest.Repository, manifest.Target, l.Digest)
-			if err := m.store.PutLayer(storage.Layer{
+			if err := m.store.PutLayer(types.Layer{
 				ManifestID: mf.ID,
 				MediaType:  l.MediaType,
 				Digest:     l.Digest,

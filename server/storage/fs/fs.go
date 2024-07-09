@@ -11,36 +11,25 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/johnewart/freighter/server/storage"
+	"github.com/johnewart/freighter/server/storage/types"
 	"zombiezen.com/go/log"
 )
 
-type DiskDataStore struct {
-	storage.FreighterDataStore
+type DiskLayerFileStore struct {
+	types.LayerStore
 	root string
-	db   *DB
 }
 
-func NewDiskDataStore(rootPath string) (*DiskDataStore, error) {
-	if db, err := NewDB(filepath.Join(rootPath, "metadata.db")); err != nil {
-		return nil, err
-	} else {
-
-		return &DiskDataStore{
-			root: rootPath,
-			db:   db,
-		}, nil
-	}
+func NewDiskLayerFileStore(root string) (*DiskLayerFileStore, error) {
+	return &DiskLayerFileStore{
+		root: root,
+	}, nil
 }
 
-func (d *DiskDataStore) GetManifest(repo string, target string) (*storage.Manifest, error) {
-	return d.db.GetManifest(repo, target)
-}
-
-func (s *DiskDataStore) readFilesFromArchive(digest storage.Digest) ([]storage.FileRecord, error) {
+func (s *DiskLayerFileStore) readFilesFromArchive(digest types.Digest) ([]types.FileRecord, error) {
 	digestPath := s.getLayerPath(digest)
 	log.Infof(context.Background(), "Reading files from layer: %s @ %s", digest, digestPath)
-	files := make([]storage.FileRecord, 0)
+	files := make([]types.FileRecord, 0)
 	if file, err := os.Open(digestPath); err == nil {
 		archive, err := gzip.NewReader(file)
 
@@ -62,14 +51,14 @@ func (s *DiskDataStore) readFilesFromArchive(digest storage.Digest) ([]storage.F
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, storage.FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false})
+			files = append(files, types.FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false})
 		}
 	}
 
 	return files, nil
 }
 
-func (s *DiskDataStore) LayerFileNames(digest storage.Digest) ([]string, error) {
+func (s *DiskLayerFileStore) LayerFileNames(digest types.Digest) ([]string, error) {
 	files, err := s.readFilesFromArchive(digest)
 	if err != nil {
 		return nil, err
@@ -81,11 +70,12 @@ func (s *DiskDataStore) LayerFileNames(digest storage.Digest) ([]string, error) 
 	return names, nil
 }
 
-func (s *DiskDataStore) IngestLayer(ctx context.Context, digest storage.Digest) error {
+func (s *DiskLayerFileStore) IngestLayer(ctx context.Context, digest types.Digest) ([]types.LayerFile, error) {
 	if files, err := s.readFilesFromArchive(digest); err != nil {
 		log.Errorf(context.Background(), "Error reading files from layer: %v", err)
-		return err
+		return nil, err
 	} else {
+		result := make([]types.LayerFile, 0, len(files))
 		for _, r := range files {
 			if !strings.HasPrefix(r.Name, "/") {
 				r.Name = fmt.Sprintf("/%s", r.Name)
@@ -107,22 +97,21 @@ func (s *DiskDataStore) IngestLayer(ctx context.Context, digest storage.Digest) 
 
 			log.Infof(context.Background(), "Ingesting file: %s in '%s' (%v)", r.Name, dir, r.IsDir)
 
-			if err := s.db.PutLayerFile(&storage.LayerFile{
+			result = append(result, types.LayerFile{
 				LayerDigest: digest.String(),
 				FilePath:    r.Name,
 				Size:        r.Size,
 				IsDir:       r.IsDir,
 				Directory:   dir,
-			}); err != nil {
-				log.Errorf(context.Background(), "Error creating layer file: %v", err)
-				return err
-			}
+			})
+
 		}
-		return nil
+
+		return result, nil
 	}
 }
 
-func (s *DiskDataStore) readFile(digest storage.Digest, filename string) ([]byte, error) {
+func (s *DiskLayerFileStore) readFile(digest types.Digest, filename string) ([]byte, error) {
 	ctx := context.Background()
 	log.Infof(ctx, "Fetching file %s from  %s", filename, digest)
 
@@ -161,81 +150,45 @@ func (s *DiskDataStore) readFile(digest storage.Digest, filename string) ([]byte
 	return nil, fmt.Errorf("File not found: %s", filename)
 }
 
-func (s *DiskDataStore) GetDirectoryTreeForLayer(digest storage.Digest) ([]storage.FileRecord, error) {
+func (s *DiskLayerFileStore) GetDirectoryTreeForLayer(digest types.Digest) ([]types.FileRecord, error) {
 	return s.readFilesFromArchive(digest)
 }
 
-func (s *DiskDataStore) DeleteLayer(digest storage.Digest) error {
-
-	if err := s.db.DeleteLayer(digest); err != nil {
-		log.Errorf(context.Background(), "Error deleting layer: %v", err)
-		return err
-	}
-
-	return nil
+func (s *DiskLayerFileStore) DeleteLayer(digest types.Digest) error {
+	return os.Remove(s.getLayerPath(digest))
 }
 
-func (s *DiskDataStore) getLayerPath(digest storage.Digest) string {
+func (s *DiskLayerFileStore) getLayerPath(digest types.Digest) string {
 	return filepath.Join(s.root, digest.Algorithm, digest.Hash)
 }
 
-func (d *DiskDataStore) PutManifest(m storage.Manifest) (storage.Manifest, error) {
-	return d.db.PutManifest(m)
-}
-
-func (d *DiskDataStore) GetLayer(digest storage.Digest) (*storage.Layer, error) {
-	if layer, err := d.db.GetLayer(digest); err != nil {
-		return nil, err
-	} else {
-		if layer == nil {
-			layerPath := d.getLayerPath(digest)
-			log.Infof(context.Background(), "Layer not found in DB: %s - checking if exists on disk at: %s", digest, layerPath)
-			if stat, err := os.Stat(layerPath); err != nil {
-				// No error, just doesn't exist
-				return nil, nil
-			} else {
-				layer = &storage.Layer{
-					Digest: digest.String(),
-					Size:   stat.Size(),
-				}
-			}
+func (d *DiskLayerFileStore) GetLayer(digest types.Digest) (*types.Layer, error) {
+	layerPath := d.getLayerPath(digest)
+	log.Infof(context.Background(), "Layer not found in DB: %s - checking if exists on disk at: %s", digest, layerPath)
+	if stat, err := os.Stat(layerPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		} else {
+			return nil, err
 		}
-
+	} else {
+		layer := &types.Layer{
+			Digest: digest.String(),
+			Size:   stat.Size(),
+		}
 		return layer, nil
 	}
 }
 
-func (s *DiskDataStore) ListFiles(repo string, target string, path string) ([]storage.FileRecord, error) {
-	if files, err := s.db.GetFilesForRepo(repo, target, path); err != nil {
-		return nil, err
-	} else {
-		result := make([]storage.FileRecord, 0, len(files))
-		for _, f := range files {
-			result = append(result, storage.FileRecord{Name: f.FilePath, Size: f.Size, IsDir: f.IsDir})
-		}
-		return result, nil
-	}
+func (s *DiskLayerFileStore) ReadFile(lf types.LayerFile) ([]byte, error) {
+	return s.readFile(lf.Digest(), lf.FilePath)
 }
 
-func (s *DiskDataStore) ReadFile(repository string, target string, filename string) ([]byte, error) {
-	ctx := context.Background()
-	if lf, err := s.db.GetFileLayer(repository, target, filename); err != nil {
-		return nil, err
-	} else {
-		log.Infof(ctx, "Fetching file %s from %s:%s in layer %s", filename, repository, target, lf.Digest())
-		return s.readFile(lf.Digest(), filename)
-	}
-}
-
-func (s *DiskDataStore) blobHashPath(algorithm string, h string) string {
+func (s *DiskLayerFileStore) blobHashPath(algorithm string, h string) string {
 	return filepath.Join(s.root, algorithm, h)
 }
 
-func (s *DiskDataStore) PutLayer(l storage.Layer) error {
-	return s.db.PutLayer(&l)
-}
-
-func (s *DiskDataStore) StoreBlob(digest storage.Digest, rc io.ReadCloser) error {
+func (s *DiskLayerFileStore) StoreBlob(digest types.Digest, rc io.ReadCloser) error {
 	f, err := os.CreateTemp(s.root, "upload-*")
 	if err != nil {
 		return err
@@ -267,8 +220,12 @@ func (s *DiskDataStore) StoreBlob(digest storage.Digest, rc io.ReadCloser) error
 	return nil
 }
 
-func (s *DiskDataStore) String() string {
-	return fmt.Sprintf("DiskDataStore: %s", s.root)
+func (s *DiskLayerFileStore) String() string {
+	return fmt.Sprintf("DiskLayerFileStore: %s", s.root)
 }
 
-var _ = (storage.FreighterDataStore)((*DiskDataStore)(nil))
+func (s *DiskLayerFileStore) GetLayerReader(digest types.Digest) (io.ReadCloser, error) {
+	return os.Open(s.getLayerPath(digest))
+}
+
+var _ = (types.LayerStore)((*DiskLayerFileStore)(nil))
