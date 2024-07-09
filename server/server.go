@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/johnewart/freighter/server/layers"
-	"github.com/johnewart/freighter/server/layers/fs"
+	"github.com/johnewart/freighter/server/handlers"
+	"github.com/johnewart/freighter/server/storage"
 
 	"net"
 	"os"
@@ -22,13 +22,13 @@ import (
 
 type server struct {
 	pb.UnimplementedFreighterServer
-	ManifestStore   registry.ManifestStore
-	LayerRepository layers.RepositoryStore
+	ManifestStore registry.ManifestStore
+	DataStore     storage.FreighterDataStore
 }
 
 func (s *server) GetFile(ctx context.Context, in *pb.FileRequest) (*pb.FileReply, error) {
 	log.Infof(ctx, "Fetching file %s from %s:%s", in.GetPath(), in.GetRepository(), in.GetTarget())
-	if data, err := s.LayerRepository.ReadFile(in.GetRepository(), in.GetTarget(), in.GetPath()); err != nil {
+	if data, err := s.DataStore.ReadFile(in.GetRepository(), in.GetTarget(), in.GetPath()); err != nil {
 		log.Errorf(ctx, "Error reading file: %v", err)
 		return nil, err
 	} else {
@@ -41,7 +41,7 @@ func (s *server) GetTree(ctx context.Context, in *pb.TreeRequest) (*pb.TreeReply
 
 	files := make([]*pb.FileInfo, 0)
 
-	if directories := s.LayerRepository.GetDirectoryTree(in.GetRepository(), in.GetTarget()); directories == nil {
+	if directories := s.DataStore.GetDirectoryTreeForRepo(in.GetRepository(), in.GetTarget()); directories == nil {
 		log.Errorf(ctx, "Error reading directory: %v", directories)
 	} else {
 		for _, d := range directories {
@@ -63,7 +63,7 @@ func (s *server) GetDir(ctx context.Context, in *pb.DirRequest) (*pb.DirReply, e
 
 	files := make([]*pb.FileInfo, 0)
 
-	if fileRecords, err := s.LayerRepository.ListFiles(in.GetRepository(), in.GetTarget(), path); err != nil {
+	if fileRecords, err := s.DataStore.ListFiles(in.GetRepository(), in.GetTarget(), path); err != nil {
 		log.Errorf(ctx, "Error reading directory: %v", err)
 	} else {
 		log.Infof(ctx, "Found %d files in %s", len(fileRecords), path)
@@ -82,37 +82,29 @@ type FreighterServer struct {
 	ctx             context.Context
 }
 
-func NewFreighterServer(rootPath string) *FreighterServer {
+func NewFreighterServer(dataStore storage.FreighterDataStore) *FreighterServer {
 	ctx := context.Background()
 	s := grpc.NewServer()
-	db := fs.NewDB("manifests.db")
 
-	if manifestStore, err := NewFreighterManifestStore(db); err != nil {
-		log.Errorf(ctx, "Error creating manifest store: %v", err)
-		return nil
-	} else {
-		log.Infof(ctx, "Created manifest store: %v", manifestStore)
-		layerStore := fs.NewDiskLayerStore(rootPath, db)
-		layerRepository := fs.NewDiskRepositoryStore(layerStore, db)
-		indexingBlobstore := NewIndexingBlobStore(rootPath, layerRepository)
+	manifestStore := handlers.NewFreighterManifestStore(dataStore)
+	indexingBlobstore := handlers.NewIndexingBlobStore(dataStore)
 
-		registryHandler := registry.New(
-			registry.WithWarning(.01, "Congratulations! You've won a lifetime's supply of free image pulls from this in-memory registry!"),
-			registry.WithBlobHandler(indexingBlobstore),
-			registry.WithManifestStore(manifestStore),
-		)
-		pb.RegisterFreighterServer(s, &server{
-			LayerRepository: layerRepository,
-			ManifestStore:   manifestStore,
-		})
+	registryHandler := registry.New(
+		registry.WithWarning(.01, "Congratulations! You've won a lifetime's supply of free image pulls from this in-memory registry!"),
+		registry.WithBlobHandler(indexingBlobstore),
+		registry.WithManifestStore(manifestStore),
+	)
+	pb.RegisterFreighterServer(s, &server{
+		DataStore:     dataStore,
+		ManifestStore: manifestStore,
+	})
 
-		log.Infof(ctx, "Registering Freighter server with layer root at %s", rootPath)
+	log.Infof(ctx, "Registering Freighter server with storage %s", dataStore.String())
 
-		return &FreighterServer{
-			ctx:             ctx,
-			server:          s,
-			registryHandler: registryHandler,
-		}
+	return &FreighterServer{
+		ctx:             ctx,
+		server:          s,
+		registryHandler: registryHandler,
 	}
 }
 

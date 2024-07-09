@@ -1,4 +1,4 @@
-package server
+package handlers
 
 import (
 	"context"
@@ -7,7 +7,8 @@ import (
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/registry"
-	"github.com/johnewart/freighter/server/layers/fs"
+	"github.com/johnewart/freighter/server/storage"
+	"zombiezen.com/go/log"
 )
 
 type ManifestConfig struct {
@@ -18,7 +19,7 @@ type ManifestConfig struct {
 
 type ManifestLayer struct {
 	MediaType string `json:"mediaType"`
-	Size      int    `json:"size"`
+	Size      int64  `json:"size"`
 	Digest    string `json:"digest"`
 }
 
@@ -31,23 +32,23 @@ type ContainerManifest struct {
 
 type FreighterManifestStore struct {
 	registry.ManifestStore
-	lock sync.RWMutex
-	ctx  context.Context
-	db   *fs.DB
+	lock  sync.RWMutex
+	ctx   context.Context
+	store storage.FreighterDataStore
 }
 
-func NewFreighterManifestStore(db *fs.DB) (*FreighterManifestStore, error) {
+func NewFreighterManifestStore(store storage.FreighterDataStore) *FreighterManifestStore {
 	ctx := context.Background()
 
 	return &FreighterManifestStore{
-		ctx: ctx,
-		db:  db,
-	}, nil
+		ctx:   ctx,
+		store: store,
+	}
 }
 
 func (m *FreighterManifestStore) Get(repo string, target string) (*registry.Manifest, error) {
 
-	if manifest, err := m.db.GetManifest(repo, target); err != nil {
+	if manifest, err := m.store.GetManifest(repo, target); err != nil {
 		return nil, fmt.Errorf("manifest not found")
 	} else {
 		return &registry.Manifest{
@@ -62,13 +63,15 @@ func (m *FreighterManifestStore) Get(repo string, target string) (*registry.Mani
 
 func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 
+	log.Infof(m.ctx, "Put manifest %s:%s", manifest.Repository, manifest.Target)
+
 	var cm ContainerManifest
 
 	if err := json.Unmarshal(manifest.Blob, &cm); err != nil {
 		return fmt.Errorf("failed to deserialize manifest blob: %v", err)
 	}
 
-	ms := fs.Manifest{
+	ms := storage.Manifest{
 		Repository:      manifest.Repository,
 		Target:          manifest.Target,
 		MediaType:       manifest.MediaType,
@@ -79,12 +82,13 @@ func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 		RawBlob:         manifest.Blob,
 	}
 
-	if mf, err := m.db.PutManifest(ms); err != nil {
+	if mf, err := m.store.PutManifest(ms); err != nil {
 		return fmt.Errorf("error creating manifest: %v", err)
 	} else {
 
 		for i, l := range cm.Layers {
-			if err := m.db.PutLayer(&fs.Layer{
+			log.Infof(m.ctx, "Put layer %s:%s %s", manifest.Repository, manifest.Target, l.Digest)
+			if err := m.store.PutLayer(storage.Layer{
 				ManifestID: mf.ID,
 				MediaType:  l.MediaType,
 				Digest:     l.Digest,
@@ -102,12 +106,12 @@ func (m *FreighterManifestStore) Put(manifest registry.Manifest) error {
 }
 
 func (m *FreighterManifestStore) Delete(repo string, target string) error {
-	return m.db.DeleteManifest(repo, target)
+	return m.store.DeleteManifest(repo, target)
 }
 
 func (m *FreighterManifestStore) GetTags(repo string) ([]string, error) {
 
-	if repoManifests, err := m.db.ManifestsForRepo(repo); err != nil {
+	if repoManifests, err := m.store.ManifestsForRepo(repo); err != nil {
 		return nil, fmt.Errorf("error finding manifests: %v", err)
 	} else {
 		tags := make([]string, 0, len(repoManifests))
@@ -120,15 +124,15 @@ func (m *FreighterManifestStore) GetTags(repo string) ([]string, error) {
 }
 
 func (m *FreighterManifestStore) Exists(repo string, target string) bool {
-	return m.db.ManifestExists(repo, target)
+	return m.store.ManifestExists(repo, target)
 }
 
 func (m *FreighterManifestStore) ListRepositories() []string {
-	return m.db.ListRepositories()
+	return m.store.ListRepositories()
 }
 
 func (m *FreighterManifestStore) ManifestsForRepository(repo string) ([]registry.Manifest, bool) {
-	if repoManifests, err := m.db.ManifestsForRepo(repo); err != nil {
+	if repoManifests, err := m.store.ManifestsForRepo(repo); err != nil {
 		return nil, false
 	} else {
 		result := make([]registry.Manifest, 0)

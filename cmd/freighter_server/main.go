@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/johnewart/freighter/server"
+	"github.com/johnewart/freighter/server/storage/fs"
 	"zombiezen.com/go/log"
 )
 
@@ -34,7 +35,13 @@ func main() {
 
 	ctx := context.Background()
 
-	fs := server.NewFreighterServer(*cacheRoot)
+	dataStore, err := fs.NewDiskDataStore(*cacheRoot)
+	if err != nil {
+		log.Errorf(ctx, "Error creating data store: %v", err)
+		return
+	}
+
+	fs := server.NewFreighterServer(dataStore)
 	wg.Add(2)
 	go func() {
 		if err := fs.Serve("0.0.0.0", *grpcPort); err != nil {

@@ -8,20 +8,19 @@ import (
 	"zombiezen.com/go/log"
 )
 
-type RepositoryLayerStore struct {
-	layers.RepositoryLayerStore
-	store *DiskLayerFileStore
+type DbRepositoryStore struct {
+	store layers.LayerStore
 	DB    *DB
 }
 
-func NewRepositoryLayerStore(layerStore *DiskLayerFileStore, db *DB) *RepositoryLayerStore {
-	return &RepositoryLayerStore{
+func NewDbRepositoryStore(layerStore layers.LayerStore, db *DB) *DbRepositoryStore {
+	return &DbRepositoryStore{
 		store: layerStore,
 		DB:    db,
 	}
 }
 
-func (s *RepositoryLayerStore) ListFiles(repo string, target string, path string) ([]FileRecord, error) {
+func (s *DbRepositoryStore) ListFiles(repo string, target string, path string) ([]FileRecord, error) {
 	if files, err := s.DB.GetFilesForRepo(repo, target, path); err != nil {
 		return nil, err
 	} else {
@@ -43,7 +42,7 @@ func (s *RepositoryLayerStore) ListFiles(repo string, target string, path string
 	}
 }
 
-func (s *RepositoryLayerStore) ReadFile(repository string, target string, filename string) ([]byte, error) {
+func (s *DbRepositoryStore) ReadFile(repository string, target string, filename string) ([]byte, error) {
 	ctx := context.Background()
 	if f, err := s.DB.GetFileLayer(repository, target, filename); err != nil {
 		return nil, err
@@ -54,6 +53,6 @@ func (s *RepositoryLayerStore) ReadFile(repository string, target string, filena
 	}
 }
 
-func (s *RepositoryLayerStore) GetDirectoryTree(repository string, target string) []string {
+func (s *DbRepositoryStore) GetDirectoryTree(repository string, target string) []string {
 	return s.DB.GetDirectoryTreeForRepo(repository, target)
 }
