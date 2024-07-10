@@ -2,7 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	golog "log"
@@ -16,7 +18,8 @@ import (
 
 type DBMetadataStore struct {
 	types.MetadataStore
-	db *gorm.DB
+	db     *gorm.DB
+	dbPath string
 }
 
 func NewDBMetadataStore(path string) (*DBMetadataStore, error) {
@@ -24,14 +27,16 @@ func NewDBMetadataStore(path string) (*DBMetadataStore, error) {
 		golog.New(os.Stdout, "\r\n", golog.LstdFlags), // io writer
 		logger.Config{
 			SlowThreshold:             time.Second, // Slow SQL threshold
-			LogLevel:                  logger.Info,
+			LogLevel:                  logger.Error,
 			IgnoreRecordNotFoundError: true,  // Ignore ErrRecordNotFound error for logger
 			ParameterizedQueries:      true,  // Don't include params in the SQL log
 			Colorful:                  false, // Disable color
 		},
 	)
 
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
+	dbPath := filepath.Join(path, "freighter.db")
+
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: newLogger,
 	})
 
@@ -40,7 +45,8 @@ func NewDBMetadataStore(path string) (*DBMetadataStore, error) {
 	}
 
 	d := &DBMetadataStore{
-		db: db,
+		db:     db,
+		dbPath: path,
 	}
 
 	d.Migrate()
@@ -82,7 +88,7 @@ func (d *DBMetadataStore) GetManifest(repo string, target string) (*types.Manife
 	return &manifest, nil
 }
 
-func (d *DBMetadataStore) PutManifest(m types.Manifest) (types.Manifest, error) {
+func (d *DBMetadataStore) StoreManifest(m types.Manifest) (types.Manifest, error) {
 
 	if err := d.db.Create(&m).Error; err != nil {
 		return m, err
@@ -184,7 +190,7 @@ func (d *DBMetadataStore) GetDirectoryTreeForRepo(repo string, target string) []
 func (d *DBMetadataStore) GetFilesForRepo(repo string, target string, path string) ([]types.LayerFile, error) {
 	var layers []types.Layer
 
-	if err := d.db.Where("repository = ? AND target = ?", repo, target).Find(&layers).Error; err != nil {
+	if err := d.db.Where("repository = ? AND target = ?", repo, target).Order("level asc").Find(&layers).Error; err != nil {
 		return nil, err
 	}
 
@@ -195,7 +201,7 @@ func (d *DBMetadataStore) GetFilesForRepo(repo string, target string, path strin
 	filemap := make(map[string]types.LayerFile)
 
 	for _, l := range layers {
-		log.Infof(context.Background(), "Fetching files for layer: %s:%s %s", repo, target, l.Digest)
+		log.Infof(context.Background(), "Fetching files for layer: %s:%s %s at level %d", repo, target, l.Digest, l.Level)
 		if path != "" {
 			log.Infof(context.Background(), "Fetching files for layer: %s:%s %s in %s", repo, target, l.Digest, path)
 			if err := d.db.Where("layer_digest = ? AND directory = ?", l.Digest, path).Find(&layerFiles).Error; err != nil {
@@ -208,6 +214,8 @@ func (d *DBMetadataStore) GetFilesForRepo(repo string, target string, path strin
 		}
 
 		for _, f := range layerFiles {
+			// Because the layers are ordered by oldest to newest (level asc)
+			// we will end up with the newest file last in the map
 			filemap[f.FilePath] = f
 		}
 	}
@@ -229,7 +237,28 @@ func (d *DBMetadataStore) GetLayerFiles(digest types.Digest) ([]types.LayerFile,
 	return layerFiles, nil
 }
 
-func (d *DBMetadataStore) PutLayerFile(lf *types.LayerFile) error {
+func (d *DBMetadataStore) GetLayerFile(repo string, target string, filePath string) (*types.LayerFile, error) {
+	var layers []types.Layer
+
+	if err := d.db.Where("repository = ? AND target = ?", repo, target).Order("level asc").Find(&layers).Error; err != nil {
+		return nil, err
+	}
+
+	var layerFile types.LayerFile
+
+	for _, l := range layers {
+		if err := d.db.Where("layer_digest = ? AND file_path = ?", l.GetDigest().String(), filePath).First(&layerFile).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				continue
+			}
+			return nil, err
+		}
+	}
+
+	return &layerFile, nil
+}
+
+func (d *DBMetadataStore) StoreLayerFile(lf types.LayerFile) error {
 	if err := d.db.Create(lf).Error; err != nil {
 		return err
 	}
@@ -237,7 +266,16 @@ func (d *DBMetadataStore) PutLayerFile(lf *types.LayerFile) error {
 	return nil
 }
 
-func (d *DBMetadataStore) PutLayer(l *types.Layer) error {
+func (d *DBMetadataStore) StoreLayerFiles(layerFiles []types.LayerFile) error {
+	for _, lf := range layerFiles {
+		if err := d.StoreLayerFile(lf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DBMetadataStore) StoreLayer(l types.Layer) error {
 	if err := d.db.Create(l).Error; err != nil {
 		return err
 	}
@@ -256,3 +294,9 @@ func (d *DBMetadataStore) DeleteLayer(digest types.Digest) error {
 
 	return nil
 }
+
+func (d *DBMetadataStore) String() string {
+	return fmt.Sprintf("DBMetadataStore at %s", d.dbPath)
+}
+
+var _ = (types.MetadataStore)((*DBMetadataStore)(nil))

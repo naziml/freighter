@@ -42,6 +42,21 @@ func (s *FreighterDataStore) GetDirectoryTreeForRepo(repo string, target string)
 	return s.metadata.GetDirectoryTreeForRepo(repo, target)
 }
 
+func (s *FreighterDataStore) GetFilesForRepo(repo string, target string) ([]types.FileRecord, error) {
+	if files, err := s.metadata.GetFilesForRepo(repo, target, ""); err != nil {
+		return nil, err
+	} else {
+		result := make([]types.FileRecord, 0, len(files))
+		for _, f := range files {
+			result = append(result, types.FileRecord{Name: f.FilePath, Size: f.Size, IsDir: f.IsDir})
+		}
+		return result, nil
+	}
+
+	//return s.metadata.GetFilesForRepo(repo, target, "")
+
+}
+
 func (s *FreighterDataStore) DeleteLayer(digest types.Digest) error {
 
 	if err := s.metadata.DeleteLayer(digest); err != nil {
@@ -91,7 +106,7 @@ func (s *FreighterDataStore) ReadFile(repository string, target string, filename
 		return nil, err
 	} else {
 		log.Infof(ctx, "Fetching file %s from %s:%s in layer %s", filename, repository, target, lf.Digest())
-		return s.layers.ReadFile(lf)
+		return s.layers.ReadFile(*lf)
 	}
 }
 

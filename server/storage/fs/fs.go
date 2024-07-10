@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,10 +28,11 @@ func NewDiskLayerFileStore(root string) (*DiskLayerFileStore, error) {
 	}, nil
 }
 
-func (s *DiskLayerFileStore) readFilesFromArchive(digest types.Digest) ([]types.FileRecord, error) {
+func (s *DiskLayerFileStore) IngestLayer(ctx context.Context, digest types.Digest) ([]types.LayerFile, error) {
 	digestPath := s.getLayerPath(digest)
 	log.Infof(context.Background(), "Reading files from layer: %s @ %s", digest, digestPath)
-	files := make([]types.FileRecord, 0)
+	result := make([]types.LayerFile, 0)
+
 	if file, err := os.Open(digestPath); err == nil {
 		archive, err := gzip.NewReader(file)
 
@@ -51,32 +54,9 @@ func (s *DiskLayerFileStore) readFilesFromArchive(digest types.Digest) ([]types.
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, types.FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false})
-		}
-	}
 
-	return files, nil
-}
+			r := types.FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false}
 
-func (s *DiskLayerFileStore) LayerFileNames(digest types.Digest) ([]string, error) {
-	files, err := s.readFilesFromArchive(digest)
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(files))
-	for _, f := range files {
-		names = append(names, f.Name)
-	}
-	return names, nil
-}
-
-func (s *DiskLayerFileStore) IngestLayer(ctx context.Context, digest types.Digest) ([]types.LayerFile, error) {
-	if files, err := s.readFilesFromArchive(digest); err != nil {
-		log.Errorf(context.Background(), "Error reading files from layer: %v", err)
-		return nil, err
-	} else {
-		result := make([]types.LayerFile, 0, len(files))
-		for _, r := range files {
 			if !strings.HasPrefix(r.Name, "/") {
 				r.Name = fmt.Sprintf("/%s", r.Name)
 			}
@@ -97,61 +77,46 @@ func (s *DiskLayerFileStore) IngestLayer(ctx context.Context, digest types.Diges
 
 			log.Infof(context.Background(), "Ingesting file: %s in '%s' (%v)", r.Name, dir, r.IsDir)
 
-			result = append(result, types.LayerFile{
+			lf := types.LayerFile{
 				LayerDigest: digest.String(),
 				FilePath:    r.Name,
 				Size:        r.Size,
 				IsDir:       r.IsDir,
 				Directory:   dir,
-			})
+			}
+
+			log.Infof(ctx, "Ingesting file: %s", lf.FilePath)
+			outfilePath := s.getPathForLayerFile(lf)
+			log.Infof(ctx, "Writing file to: %s", outfilePath)
+
+			outDir, _ := filepath.Split(outfilePath)
+			if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
+				log.Errorf(ctx, "Error creating directory: %v", err)
+				return nil, err
+			}
+
+			if f, err := os.Create(outfilePath); err == nil {
+				if err := func() error {
+					defer f.Close()
+					_, err := io.Copy(f, tr)
+					return err
+				}(); err != nil {
+					log.Infof(ctx, "Error copying file data: %v", err)
+				}
+			} else {
+				log.Infof(ctx, "Error creating file: %v", err)
+			}
+
+			result = append(result, lf)
 
 		}
 
 		return result, nil
-	}
-}
-
-func (s *DiskLayerFileStore) readFile(digest types.Digest, filename string) ([]byte, error) {
-	ctx := context.Background()
-	log.Infof(ctx, "Fetching file %s from  %s", filename, digest)
-
-	filename = strings.TrimPrefix(filename, "/")
-	tarFile := s.getLayerPath(digest)
-	file, err := os.Open(tarFile)
-	if err != nil {
+	} else {
+		log.Errorf(ctx, "Error opening file: %v", err)
 		return nil, err
 	}
-	defer file.Close()
 
-	archive, err := gzip.NewReader(file)
-	if err != nil {
-		return nil, err
-	}
-	defer archive.Close()
-
-	tr := tar.NewReader(archive)
-
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if hdr.Name == filename {
-			buf, err := ioutil.ReadAll(tr)
-			if err != nil {
-				return nil, err
-			}
-			return buf, nil
-		}
-	}
-	return nil, fmt.Errorf("File not found: %s", filename)
-}
-
-func (s *DiskLayerFileStore) GetDirectoryTreeForLayer(digest types.Digest) ([]types.FileRecord, error) {
-	return s.readFilesFromArchive(digest)
 }
 
 func (s *DiskLayerFileStore) DeleteLayer(digest types.Digest) error {
@@ -160,6 +125,16 @@ func (s *DiskLayerFileStore) DeleteLayer(digest types.Digest) error {
 
 func (s *DiskLayerFileStore) getLayerPath(digest types.Digest) string {
 	return filepath.Join(s.root, digest.Algorithm, digest.Hash)
+}
+
+func (s *DiskLayerFileStore) getPathForLayerFile(lf types.LayerFile) string {
+	log.Infof(context.Background(), "Getting path for layer file: %s", lf.String())
+	digest := lf.Digest()
+	hasher := sha1.New()
+	hasher.Write([]byte(lf.FilePath))
+	sha := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+	return filepath.Join(s.root, "extracted", digest.Algorithm, digest.Hash, sha)
 }
 
 func (d *DiskLayerFileStore) GetLayer(digest types.Digest) (*types.Layer, error) {
@@ -181,14 +156,21 @@ func (d *DiskLayerFileStore) GetLayer(digest types.Digest) (*types.Layer, error)
 }
 
 func (s *DiskLayerFileStore) ReadFile(lf types.LayerFile) ([]byte, error) {
-	return s.readFile(lf.Digest(), lf.FilePath)
+	fname := s.getPathForLayerFile(lf)
+	log.Infof(context.Background(), "Reading file: %s", fname)
+	if f, err := os.Open(fname); err == nil {
+		defer f.Close()
+		return ioutil.ReadAll(f)
+	} else {
+		return nil, err
+	}
 }
 
 func (s *DiskLayerFileStore) blobHashPath(algorithm string, h string) string {
 	return filepath.Join(s.root, algorithm, h)
 }
 
-func (s *DiskLayerFileStore) StoreBlob(digest types.Digest, rc io.ReadCloser) error {
+func (s *DiskLayerFileStore) StoreLayerBlob(digest types.Digest, rc io.ReadCloser) error {
 	f, err := os.CreateTemp(s.root, "upload-*")
 	if err != nil {
 		return err

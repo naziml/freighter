@@ -22,8 +22,9 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/hanwen/go-fuse/v2/fs"
 	"time"
+
+	"github.com/hanwen/go-fuse/v2/fs"
 
 	pb "github.com/johnewart/freighter/freighter/proto"
 	ffs "github.com/johnewart/freighter/fs"
@@ -76,7 +77,7 @@ func main() {
 	if err != nil {
 		log.Errorf(ctx, "Mount fail: %v", err)
 	}
-	root.LoadTree(ctx)
+	//root.LoadTree(ctx)
 	server.Wait()
 
 }

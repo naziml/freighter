@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -15,7 +16,18 @@ type LayerFile struct {
 }
 
 func (lf LayerFile) Digest() Digest {
-	return ParseDigest(lf.LayerDigest)
+	if strings.Contains(lf.LayerDigest, ":") {
+		return ParseDigest(lf.LayerDigest)
+	} else {
+		return Digest{
+			Algorithm: "sha256",
+			Hash:      lf.LayerDigest,
+		}
+	}
+}
+
+func (lf LayerFile) String() string {
+	return fmt.Sprintf("%s:%s/%s", lf.Digest().Algorithm, lf.Digest().Hash, lf.FilePath)
 }
 
 type Layer struct {
@@ -84,7 +96,7 @@ type MetadataStore interface {
 	DeleteManifest(repository, target string) error
 	GetFilesForRepo(repository, target, path string) ([]LayerFile, error)
 	GetDirectoryTreeForRepo(repository, target string) []string
-	GetLayerFile(repository, target, filename string) (LayerFile, error)
+	GetLayerFile(repository, target, filename string) (*LayerFile, error)
 	GetDirectoryTreeForLayer(digest Digest) ([]FileRecord, error)
 	StoreLayerFiles([]LayerFile) error
 	StoreLayer(layer Layer) error

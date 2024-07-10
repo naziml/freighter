@@ -27,8 +27,13 @@ type server struct {
 }
 
 func (s *server) GetFile(ctx context.Context, in *pb.FileRequest) (*pb.FileReply, error) {
-	log.Infof(ctx, "Fetching file %s from %s:%s", in.GetPath(), in.GetRepository(), in.GetTarget())
-	if data, err := s.DataStore.ReadFile(in.GetRepository(), in.GetTarget(), in.GetPath()); err != nil {
+	filePath := in.GetPath()
+	if filePath[:2] == "//" {
+		filePath = filePath[1:]
+	}
+
+	log.Infof(ctx, "Fetching file %s from %s:%s", filePath, in.GetRepository(), in.GetTarget())
+	if data, err := s.DataStore.ReadFile(in.GetRepository(), in.GetTarget(), filePath); err != nil {
 		log.Errorf(ctx, "Error reading file: %v", err)
 		return nil, err
 	} else {
@@ -39,17 +44,17 @@ func (s *server) GetFile(ctx context.Context, in *pb.FileRequest) (*pb.FileReply
 func (s *server) GetTree(ctx context.Context, in *pb.TreeRequest) (*pb.TreeReply, error) {
 	log.Infof(ctx, "Received tree request for %s:%s", in.GetRepository(), in.GetTarget())
 
-	files := make([]*pb.FileInfo, 0)
+	result := make([]*pb.FileInfo, 0)
 
-	if directories := s.DataStore.GetDirectoryTreeForRepo(in.GetRepository(), in.GetTarget()); directories == nil {
-		log.Errorf(ctx, "Error reading directory: %v", directories)
+	if files, err := s.DataStore.GetFilesForRepo(in.GetRepository(), in.GetTarget()); err != nil {
+		log.Errorf(ctx, "Error reading tree: %v", err)
 	} else {
-		for _, d := range directories {
-			files = append(files, &pb.FileInfo{Name: d, Size: 0, IsDir: true})
+		for _, f := range files {
+			result = append(result, &pb.FileInfo{Name: f.Name, Size: f.Size, IsDir: f.IsDir})
 		}
 	}
 
-	return &pb.TreeReply{Files: files}, nil
+	return &pb.TreeReply{Files: result}, nil
 }
 
 func (s *server) GetDir(ctx context.Context, in *pb.DirRequest) (*pb.DirReply, error) {

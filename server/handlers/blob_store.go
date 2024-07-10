@@ -55,8 +55,14 @@ func (s *IndexingBlobStore) Put(ctx context.Context, repo string, h v1.Hash, rc 
 		return err
 	}
 
-	if _, err := gzip.NewReader(rc); err != nil {
-		log.Infof(ctx, "Layer does not look like a gzip archive, skipping ingestion: %s:%s", h.Algorithm, h.Hex)
+	blob, err := s.store.GetLayerReader(types.Digest{Algorithm: h.Algorithm, Hash: h.Hex})
+	if err != nil {
+		log.Errorf(ctx, "Error getting layer: %v", err)
+		return err
+	}
+
+	if _, err := gzip.NewReader(blob); err != nil {
+		log.Infof(ctx, "Layer does not look like a gzip archive, skipping ingestion: %s:%s -- %v", h.Algorithm, h.Hex, err)
 		return nil
 	} else {
 		log.Infof(ctx, "Ingesting layer: %s:%s", h.Algorithm, h.Hex)
