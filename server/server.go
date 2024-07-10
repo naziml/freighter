@@ -9,6 +9,7 @@ import (
 
 	"github.com/johnewart/freighter/server/handlers"
 	"github.com/johnewart/freighter/server/storage"
+	"github.com/johnewart/freighter/server/storage/types"
 
 	"net"
 	"os"
@@ -50,7 +51,7 @@ func (s *server) GetTree(ctx context.Context, in *pb.TreeRequest) (*pb.TreeReply
 		log.Errorf(ctx, "Error reading tree: %v", err)
 	} else {
 		for _, f := range files {
-			result = append(result, &pb.FileInfo{Name: f.Name, Size: f.Size, IsDir: f.IsDir})
+			result = append(result, LayerFileToFileInfo(f))
 		}
 	}
 
@@ -73,8 +74,8 @@ func (s *server) GetDir(ctx context.Context, in *pb.DirRequest) (*pb.DirReply, e
 	} else {
 		log.Infof(ctx, "Found %d files in %s", len(fileRecords), path)
 		for _, f := range fileRecords {
-			log.Infof(ctx, "File: %s isdir: %v", f.Name, f.IsDir)
-			files = append(files, &pb.FileInfo{Name: f.Name, Size: f.Size, IsDir: f.IsDir})
+			log.Infof(ctx, "File: %s isdir: %v", f.FilePath, f.IsDir)
+			files = append(files, LayerFileToFileInfo(f))
 		}
 	}
 
@@ -143,4 +144,31 @@ func (fs *FreighterServer) Serve(host string, port int) error {
 		return fmt.Errorf("failed to serve: %v", err)
 	}
 	return nil
+}
+
+func LayerFileToFileInfo(lf types.LayerFile) *pb.FileInfo {
+	fileType := pb.FileType_FILE
+	extraData := ""
+	switch lf.Type {
+	case "F":
+		fileType = pb.FileType_FILE
+	case "D":
+		fileType = pb.FileType_DIR
+	case "S":
+		fileType = pb.FileType_SYMLINK
+		extraData = lf.ExtraData
+	}
+
+	return &pb.FileInfo{
+		Name:       lf.FilePath,
+		Path:       lf.Directory,
+		Size:       uint64(lf.Size),
+		IsDir:      lf.IsDir,
+		Mode:       lf.Mode,
+		ModTime:    uint64(lf.Mtime),
+		AccessTime: uint64(lf.Atime),
+		ChangeTime: uint64(lf.Ctime),
+		Type:       fileType,
+		ExtraData:  extraData,
+	}
 }

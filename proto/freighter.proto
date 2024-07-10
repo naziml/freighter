@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-option go_package = "github.com/johnewart/freighter/freighter";
-
 package freighter;
 
+option go_package = "github.com/johnewart/freighter/freighter";
+
 service Freighter {
-  rpc GetDir (DirRequest) returns (DirReply) {}
-  rpc GetFile (FileRequest) returns (FileReply) {}
-  rpc GetTree (TreeRequest) returns (TreeReply) {}
+  rpc GetDir(DirRequest) returns (DirReply) {}
+  rpc GetFile(FileRequest) returns (FileReply) {}
+  rpc GetTree(TreeRequest) returns (TreeReply) {}
 }
 
 message TreeRequest {
@@ -29,12 +29,24 @@ message DirReply {
   repeated FileInfo files = 1;
 }
 
+enum FileType {
+  FILE = 0;
+  DIR = 1;
+  SYMLINK = 2;
+  OTHER = 3;
+}
+
 message FileInfo {
   string name = 1;
   string path = 2;
   bool isDir = 3;
-  int64 size = 4;
-  int64 modTime = 5;
+  uint64 size = 4;
+  uint64 modTime = 5;
+  uint32 mode = 6;
+  uint64 accessTime = 7;
+  uint64 changeTime = 8;
+  FileType type = 9;
+  string extraData = 10;
 }
 
 message FileRequest {

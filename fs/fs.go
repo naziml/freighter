@@ -37,8 +37,14 @@ type FreighterNode struct {
 	Path       string
 	Repository string
 	Target     string
-	Size       int64
+	Size       uint64
 	Data       []byte
+	Mode       uint32
+	Mtime      uint64
+	Atime      uint64
+	Ctime      uint64
+	ExtraData  string
+	Type       string
 }
 
 func (r *FreighterRoot) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
@@ -57,7 +63,7 @@ func (r *FreighterRoot) PathTo(fname string) string {
 }
 
 func (r *FreighterRoot) OnAdd(ctx context.Context) {
-	log.Infof(ctx, "OnAdd: %v", r.Path)
+	log.Debugf(ctx, "OnAdd: %v", r.Path)
 	if response, err := r.Client.GetTree(ctx, &pb.TreeRequest{Repository: r.Repository, Target: r.Target}); err != nil {
 		log.Errorf(ctx, "Error: %v", err)
 	} else {
@@ -82,17 +88,56 @@ func (r *FreighterRoot) OnAdd(ctx context.Context) {
 				}
 				p = ch
 			}
-			log.Infof(ctx, "Adding %s to %s (%s) with size %d", base, dir, p.Path(nil), file.Size)
 
 			fullPath := r.PathTo(file.Name)
-			var mode uint32
-			if file.IsDir {
-				mode = syscall.S_IFDIR | 0755
-			} else {
-				mode = 0755
+			if fullPath[:2] == "//" {
+				fullPath = fullPath[1:]
 			}
-			inode := r.NewPersistentInode(ctx, &FreighterNode{Client: r.Client, Repository: r.Repository, Target: r.Target, Name: file.Name, Size: file.Size, Path: fullPath}, fs.StableAttr{Mode: mode, Ino: 0})
-			p.AddChild(base, inode, false)
+
+			attr := fuse.Attr{
+				Mode:  file.Mode,
+				Size:  uint64(file.Size),
+				Mtime: file.ModTime,
+				Atime: file.AccessTime,
+				Ctime: file.ChangeTime,
+			}
+
+			log.Debugf(ctx, "Adding {%s}", file.String())
+
+			if file.Type == pb.FileType_SYMLINK {
+				node := &fs.MemSymlink{
+					Data: []byte(file.ExtraData),
+					Attr: attr,
+				}
+				p.AddChild(base, r.NewPersistentInode(ctx, node, fs.StableAttr{Mode: file.Mode, Ino: 0}), false)
+			} else {
+				var fileType string
+				switch file.Type {
+				case pb.FileType_FILE:
+					fileType = "F"
+				case pb.FileType_DIR:
+					fileType = "D"
+				case pb.FileType_SYMLINK:
+					fileType = "S"
+				}
+
+				node := &FreighterNode{
+					Client:     r.Client,
+					Repository: r.Repository,
+					Target:     r.Target,
+					Name:       file.Name,
+					Size:       file.Size,
+					Path:       fullPath,
+					Mode:       file.Mode,
+					Mtime:      file.ModTime,
+					Atime:      file.AccessTime,
+					Ctime:      file.ChangeTime,
+					ExtraData:  file.ExtraData,
+					Type:       fileType,
+				}
+				inode := r.NewPersistentInode(ctx, node, fs.StableAttr{Mode: file.Mode, Ino: 0})
+				p.AddChild(base, inode, false)
+			}
 		}
 	}
 }
@@ -104,15 +149,18 @@ func hash(s string) uint32 {
 }
 
 func (f *FreighterNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	out.Mode = f.Mode()
+	out.Mode = f.Mode
 	out.Size = uint64(f.Size)
+	out.Atime = f.Atime
+	out.Mtime = f.Mtime
+	out.Ctime = f.Ctime
 	return 0
 }
 
 func (f *FreighterNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	log.Infof(ctx, "OPEN %s:%s %s", f.Repository, f.Target, f.Path)
+	log.Debugf(ctx, "OPEN %s:%s %s", f.Repository, f.Target, f.Path)
 	if f.Data == nil {
-		log.Infof(ctx, "Fetching file %s from %s:%s", f.Path, f.Repository, f.Target)
+		log.Debugf(ctx, "Fetching file %s from %s:%s", f.Path, f.Repository, f.Target)
 		maxSizeOption := grpc.MaxCallRecvMsgSize(1024 * 1024 * 1024)
 		resp, err := f.Client.GetFile(ctx, &pb.FileRequest{Repository: f.Repository, Target: f.Target, Path: f.Path}, maxSizeOption)
 		if err != nil {
@@ -120,7 +168,7 @@ func (f *FreighterNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, 
 			return nil, 0, syscall.EIO
 		}
 		f.Data = resp.Data
-		log.Infof(ctx, "Read %d bytes", len(f.Data))
+		log.Debugf(ctx, "Read %d bytes", len(f.Data))
 	}
 
 	// We don't return a filehandle since we don't really need
@@ -130,9 +178,9 @@ func (f *FreighterNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, 
 }
 
 func (f *FreighterNode) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	log.Infof(ctx, "Reading %v", f.Name)
-	log.Infof(ctx, "File is %d bytes", len(f.Data))
-	log.Infof(ctx, "Reading %d bytes from %d", len(dest), off)
+	log.Debugf(ctx, "Reading %v", f.Name)
+	log.Debugf(ctx, "File is %d bytes", len(f.Data))
+	log.Debugf(ctx, "Reading %d bytes from %d", len(dest), off)
 	end := int(off) + len(dest)
 	if end > len(f.Data) {
 		end = len(f.Data)

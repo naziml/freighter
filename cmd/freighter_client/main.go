@@ -22,6 +22,8 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -46,6 +48,18 @@ var (
 
 func main() {
 	flag.Parse()
+
+	logFile, err := os.Create("freighter.log")
+	if err != nil {
+		log.Errorf(nil, "Error creating log file: %v", err)
+		return
+	}
+	logFile.Truncate(0)
+	defer logFile.Close()
+	fileLog := log.New(logFile, "", 0, nil)
+	log.SetDefault(fileLog)
+
+	fmt.Printf("Mounting %s:%s from %s - logs written to freighter.log\n", *repo, *target, *addr)
 	// Set up a connection to the server.
 	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

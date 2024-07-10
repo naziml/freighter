@@ -55,35 +55,7 @@ func (s *DiskLayerFileStore) IngestLayer(ctx context.Context, digest types.Diges
 				return nil, err
 			}
 
-			r := types.FileRecord{Name: hdr.Name, Size: hdr.Size, IsDir: false}
-
-			if !strings.HasPrefix(r.Name, "/") {
-				r.Name = fmt.Sprintf("/%s", r.Name)
-			}
-
-			parts := strings.Split(r.Name, "/")
-			dir := strings.Join(parts[:len(parts)-1], "/")
-
-			if strings.HasSuffix(r.Name, "/") {
-				r.IsDir = true
-				if len(parts) > 2 {
-					dir = strings.Join(parts[:len(parts)-2], "/")
-				}
-			}
-
-			if dir == "" {
-				dir = "/"
-			}
-
-			log.Infof(context.Background(), "Ingesting file: %s in '%s' (%v)", r.Name, dir, r.IsDir)
-
-			lf := types.LayerFile{
-				LayerDigest: digest.String(),
-				FilePath:    r.Name,
-				Size:        r.Size,
-				IsDir:       r.IsDir,
-				Directory:   dir,
-			}
+			lf := TarHeaderToLayerFile(hdr, digest)
 
 			log.Infof(ctx, "Ingesting file: %s", lf.FilePath)
 			outfilePath := s.getPathForLayerFile(lf)
@@ -208,6 +180,57 @@ func (s *DiskLayerFileStore) String() string {
 
 func (s *DiskLayerFileStore) GetLayerReader(digest types.Digest) (io.ReadCloser, error) {
 	return os.Open(s.getLayerPath(digest))
+}
+
+func TarHeaderToLayerFile(hdr *tar.Header, layerDigest types.Digest) types.LayerFile {
+
+	isDir := false
+	filename := hdr.Name
+	if !strings.HasPrefix(filename, "/") {
+		filename = fmt.Sprintf("/%s", filename)
+	}
+
+	parts := strings.Split(filename, "/")
+	parentDir := strings.Join(parts[:len(parts)-1], "/")
+
+	if strings.HasSuffix(filename, "/") {
+		isDir = true
+		if len(parts) > 2 {
+			parentDir = strings.Join(parts[:len(parts)-2], "/")
+		}
+	}
+
+	if parentDir == "" {
+		parentDir = "/"
+	}
+
+	var recordType string
+	extraData := ""
+
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		recordType = "D"
+	case tar.TypeReg:
+		recordType = "F"
+	case tar.TypeSymlink:
+		recordType = "S"
+		extraData = hdr.Linkname
+	}
+
+	return types.LayerFile{
+		LayerDigest: layerDigest.String(),
+		FilePath:    filename,
+		Size:        int64(hdr.Size),
+		IsDir:       isDir,
+		Directory:   parentDir,
+		Mode:        uint32(hdr.Mode),
+		Mtime:       int64(hdr.ModTime.Unix()),
+		Atime:       int64(hdr.AccessTime.Unix()),
+		Ctime:       int64(hdr.ChangeTime.Unix()),
+		Type:        recordType,
+		ExtraData:   extraData,
+	}
+
 }
 
 var _ = (types.LayerStore)((*DiskLayerFileStore)(nil))

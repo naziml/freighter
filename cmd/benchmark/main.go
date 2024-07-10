@@ -108,10 +108,17 @@ func main() {
 			log.Infof(ctx, "Reader %d reading %d files", readerIndex, len(filesToRead))
 			defer wg.Done()
 			for _, path := range filesToRead {
-				if bytes, err := readAllFile(path); err != nil {
-					fmt.Printf("error reading file %q: %v\n", path, err)
+				if info, err := os.Stat(path); err != nil {
+					fmt.Printf("error getting file info %q: %v\n", path, err)
 				} else {
-					totalBytesReaders[readerIndex] += bytes
+					if info.IsDir() {
+						continue
+					}
+					if bytes, err := readAllFile(path); err != nil {
+						fmt.Printf("error reading file %q: %v\n", path, err)
+					} else {
+						totalBytesReaders[readerIndex] += bytes
+					}
 				}
 			}
 		}(i)

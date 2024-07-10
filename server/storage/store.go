@@ -34,7 +34,7 @@ func (s *FreighterDataStore) IngestLayer(ctx context.Context, digest types.Diges
 	}
 }
 
-func (s *FreighterDataStore) GetDirectoryTreeForLayer(digest types.Digest) ([]types.FileRecord, error) {
+func (s *FreighterDataStore) GetDirectoryTreeForLayer(digest types.Digest) ([]types.LayerFile, error) {
 	return s.metadata.GetDirectoryTreeForLayer(digest)
 }
 
@@ -42,19 +42,8 @@ func (s *FreighterDataStore) GetDirectoryTreeForRepo(repo string, target string)
 	return s.metadata.GetDirectoryTreeForRepo(repo, target)
 }
 
-func (s *FreighterDataStore) GetFilesForRepo(repo string, target string) ([]types.FileRecord, error) {
-	if files, err := s.metadata.GetFilesForRepo(repo, target, ""); err != nil {
-		return nil, err
-	} else {
-		result := make([]types.FileRecord, 0, len(files))
-		for _, f := range files {
-			result = append(result, types.FileRecord{Name: f.FilePath, Size: f.Size, IsDir: f.IsDir})
-		}
-		return result, nil
-	}
-
-	//return s.metadata.GetFilesForRepo(repo, target, "")
-
+func (s *FreighterDataStore) GetFilesForRepo(repo string, target string) ([]types.LayerFile, error) {
+	return s.metadata.GetFilesForRepo(repo, target, "")
 }
 
 func (s *FreighterDataStore) DeleteLayer(digest types.Digest) error {
@@ -88,16 +77,8 @@ func (s *FreighterDataStore) GetLayer(digest types.Digest) (*types.Layer, error)
 	}
 }
 
-func (s *FreighterDataStore) ListFiles(repo string, target string, path string) ([]types.FileRecord, error) {
-	if files, err := s.metadata.GetFilesForRepo(repo, target, path); err != nil {
-		return nil, err
-	} else {
-		result := make([]types.FileRecord, 0, len(files))
-		for _, f := range files {
-			result = append(result, types.FileRecord{Name: f.FilePath, Size: f.Size, IsDir: f.IsDir})
-		}
-		return result, nil
-	}
+func (s *FreighterDataStore) ListFiles(repo string, target string, path string) ([]types.LayerFile, error) {
+	return s.metadata.GetFilesForRepo(repo, target, path)
 }
 
 func (s *FreighterDataStore) ReadFile(repository string, target string, filename string) ([]byte, error) {

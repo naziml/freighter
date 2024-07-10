@@ -13,6 +13,12 @@ type LayerFile struct {
 	Size        int64
 	IsDir       bool
 	Directory   string
+	Mode        uint32
+	Mtime       int64
+	Atime       int64
+	Ctime       int64
+	Type        string
+	ExtraData   string //i.e symlink target
 }
 
 func (lf LayerFile) Digest() Digest {
@@ -27,7 +33,7 @@ func (lf LayerFile) Digest() Digest {
 }
 
 func (lf LayerFile) String() string {
-	return fmt.Sprintf("%s:%s/%s", lf.Digest().Algorithm, lf.Digest().Hash, lf.FilePath)
+	return fmt.Sprintf("%s:%s/%s MODE: %o", lf.Digest().Algorithm, lf.Digest().Hash, lf.FilePath, lf.Mode)
 }
 
 type Layer struct {
@@ -73,12 +79,6 @@ func ParseDigest(s string) Digest {
 	}
 }
 
-type FileRecord struct {
-	Name  string
-	Size  int64
-	IsDir bool
-}
-
 type LayerStore interface {
 	ReadFile(LayerFile) ([]byte, error)
 	StoreLayerBlob(Digest, io.ReadCloser) error
@@ -97,7 +97,7 @@ type MetadataStore interface {
 	GetFilesForRepo(repository, target, path string) ([]LayerFile, error)
 	GetDirectoryTreeForRepo(repository, target string) []string
 	GetLayerFile(repository, target, filename string) (*LayerFile, error)
-	GetDirectoryTreeForLayer(digest Digest) ([]FileRecord, error)
+	GetDirectoryTreeForLayer(digest Digest) ([]LayerFile, error)
 	StoreLayerFiles([]LayerFile) error
 	StoreLayer(layer Layer) error
 	ManifestsForRepo(repository string) ([]Manifest, error)
