@@ -54,8 +54,8 @@ git --version
 go version
 
 # Install build tools
-sudo apt install gcc make
-sudo apt install libsqlite3-dev
+sudo apt install gcc make -y
+sudo apt install libsqlite3-dev -y
 export CGO_ENABLED=1
 
 # Create repo directory and clone code
