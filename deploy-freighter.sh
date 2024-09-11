@@ -7,7 +7,7 @@ command_exists() {
 
 # Update package list and install prerequisites
 echo "Updating package list..."
-sudo apt update
+sudo apt update -y
 
 # Install Git if it's not already installed
 if command_exists git; then
@@ -23,24 +23,29 @@ if command_exists go; then
 else
     echo "Installing Go..."
 
-    # Download the latest version of Go
-    GO_VERSION=$(curl -sL https://golang.org/dl/ | grep -oP 'go[0-9\.]+' | head -n 1)
-    GO_TAR_FILE="go${GO_VERSION}.linux-amd64.tar.gz"
-    GO_DOWNLOAD_URL="https://golang.org/dl/${GO_TAR_FILE}"
+   # Install Go from the official source (replace the version as needed)
+    GO_VERSION="1.21.1"
+    wget https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz
 
-    echo "Downloading Go ${GO_VERSION}..."
-    curl -LO "${GO_DOWNLOAD_URL}"
+    # Remove any previous Go installation
+    sudo rm -rf /usr/local/go
 
-    echo "Extracting Go..."
-    sudo tar -C /usr/local -xzf "${GO_TAR_FILE}"
+    # Install Go
+    sudo tar -C /usr/local -xzf go$GO_VERSION.linux-amd64.tar.gz
 
-    # Clean up
-    rm "${GO_TAR_FILE}"
+    # Add Go to the PATH
+    if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' ~/.bashrc; then
+        echo "export PATH=\$PATH:/usr/local/go/bin" >> ~/.bashrc
+    fi
 
-    # Set up Go environment variables
-    echo "Setting up Go environment variables..."
-    echo "export PATH=\$PATH:/usr/local/go/bin" >> ~/.bashrc
+    # Source the updated bashrc to apply changes immediately
     source ~/.bashrc
+
+    # Verify Go installation
+    go version
+
+    # Clean up the downloaded archive
+    rm go$GO_VERSION.linux-amd64.tar.gz
 fi
 
 # Verify installations
