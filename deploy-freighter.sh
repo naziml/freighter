@@ -53,6 +53,11 @@ echo "Verifying installations..."
 git --version
 go version
 
+# Install build tools
+sudo apt install gcc make
+sudo apt install libsqlite3-dev
+export CGO_ENABLED=1
+
 # Create repo directory and clone code
 echo "Getting and building code..."
 mkdir ~/code
